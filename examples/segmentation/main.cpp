@@ -44,13 +44,11 @@ std::array<Rgb, 256> vocPalette() {
 } // namespace
 
 int main(int argc, char **argv) {
-    if (argc < 3) {
-        std::fprintf(stderr, "usage: %s <deeplabv3.onnx|engine> <image> [out.jpg]\n", argv[0]);
-        return 2;
-    }
-    const std::string modelPath = argv[1];
-    const std::string imagePath = argv[2];
-    const std::string outPath = argc > 3 ? argv[3] : "segmentation.jpg";
+    const std::string root = "D:/Code/tensorrt-cpp-api";
+
+    const std::string modelPath = root + "/models/mobilenetv2-7.onnx";
+    const std::string imagePath = root + "/inputs/team.jpg";
+    const std::string outPath = root + "/inputs/segmentation.jpg";
 
     BuildOptions bo;
     bo.precision = Precision::kFp16;

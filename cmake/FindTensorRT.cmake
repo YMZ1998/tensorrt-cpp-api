@@ -1,12 +1,15 @@
 # FindTensorRT.cmake -- locate a TensorRT install (NVIDIA apt repo OR tarball) and expose
 # the imported target TensorRT::TensorRT (nvinfer + nvonnxparser + headers). Supports
-# TensorRT 10.0 through 11.x and errors clearly otherwise. Relocatable: it bakes no
+# TensorRT 8.6 through 11.x and errors clearly otherwise. Relocatable: it bakes no
 # build-tree paths, so it can be installed alongside the package config (Phase E14/H).
 #
-# Hints: set -DTensorRT_DIR=<tarball root> (or the env var) to point at a tarball; on a
-# host with libnvinfer-dev from the NVIDIA apt repo no hint is needed.
+# Hints: set -DTensorRT_DIR=<tarball root> or -DTENSORRT_ROOT=<install prefix> to point at
+# a tarball; on a host with libnvinfer-dev from the NVIDIA apt repo no hint is needed.
 
 set(_trt_hints)
+if(TENSORRT_ROOT)
+    list(APPEND _trt_hints "${TENSORRT_ROOT}")
+endif()
 if(TensorRT_DIR)
     list(APPEND _trt_hints "${TensorRT_DIR}")
 endif()
@@ -32,6 +35,23 @@ find_library(TensorRT_nvonnxparser_LIBRARY
     PATH_SUFFIXES lib lib64 targets/x86_64-linux/lib
     PATHS /usr/lib/x86_64-linux-gnu /usr/lib /usr/local/lib)
 
+if(WIN32 AND (TENSORRT_ROOT OR TensorRT_DIR))
+    if(TENSORRT_ROOT)
+        set(_trt_windows_root "${TENSORRT_ROOT}")
+    else()
+        set(_trt_windows_root "${TensorRT_DIR}")
+    endif()
+    if(NOT TensorRT_INCLUDE_DIR AND EXISTS "${_trt_windows_root}/include/NvInfer.h")
+        set(TensorRT_INCLUDE_DIR "${_trt_windows_root}/include" CACHE PATH "TensorRT include directory" FORCE)
+    endif()
+    if(NOT TensorRT_nvinfer_LIBRARY AND EXISTS "${_trt_windows_root}/lib/nvinfer.lib")
+        set(TensorRT_nvinfer_LIBRARY "${_trt_windows_root}/lib/nvinfer.lib" CACHE FILEPATH "TensorRT nvinfer library" FORCE)
+    endif()
+    if(NOT TensorRT_nvonnxparser_LIBRARY AND EXISTS "${_trt_windows_root}/lib/nvonnxparser.lib")
+        set(TensorRT_nvonnxparser_LIBRARY "${_trt_windows_root}/lib/nvonnxparser.lib" CACHE FILEPATH "TensorRT nvonnxparser library" FORCE)
+    endif()
+endif()
+
 if(TensorRT_INCLUDE_DIR AND EXISTS "${TensorRT_INCLUDE_DIR}/NvInferVersion.h")
     file(STRINGS "${TensorRT_INCLUDE_DIR}/NvInferVersion.h" _trt_ver_lines REGEX "#define NV_TENSORRT_(MAJOR|MINOR|PATCH) ")
     string(REGEX REPLACE ".*NV_TENSORRT_MAJOR ([0-9]+).*" "\\1" TensorRT_VERSION_MAJOR "${_trt_ver_lines}")
@@ -46,9 +66,9 @@ find_package_handle_standard_args(TensorRT
     VERSION_VAR TensorRT_VERSION)
 
 if(TensorRT_FOUND)
-    if(TensorRT_VERSION VERSION_LESS "10.0" OR NOT TensorRT_VERSION VERSION_LESS "12.0")
+    if(TensorRT_VERSION VERSION_LESS "8.6" OR NOT TensorRT_VERSION VERSION_LESS "12.0")
         message(FATAL_ERROR
-            "tensorrt_cpp_api requires TensorRT 10.0 - 11.x, but found ${TensorRT_VERSION} at "
+            "tensorrt_cpp_api requires TensorRT 8.6 - 11.x, but found ${TensorRT_VERSION} at "
             "${TensorRT_INCLUDE_DIR}.\n"
             "  Point -DTensorRT_DIR=<root> at a supported tarball, or install libnvinfer-dev from "
             "the NVIDIA apt repo (scripts/install_deps.sh).")

@@ -2,6 +2,9 @@
 
 #include <cstddef>
 #include <cstdint> // SIZE_MAX
+#include <limits>
+#include "tensorrt_cpp_api/span_compat.h"
+
 #include <span>
 #include <utility>
 
@@ -63,14 +66,18 @@ inline Result<std::size_t> checkedByteSize(DType dtype, const Shape &shape) {
     }
     std::size_t count = 1;
     for (int i = 0; i < shape.rank(); ++i) {
-        if (__builtin_mul_overflow(count, static_cast<std::size_t>(shape[i]), &count)) {
+        const std::size_t dimension = static_cast<std::size_t>(shape[i]);
+        if (dimension != 0 && count > (std::numeric_limits<std::size_t>::max)() / dimension) {
             return Status{StatusCode::kInvalidArgument, "shape element count overflows std::size_t"};
         }
+        count *= dimension;
     }
     std::size_t totalBits = 0;
-    if (__builtin_mul_overflow(count, static_cast<std::size_t>(bitsPerElement(dtype)), &totalBits)) {
+    const std::size_t bits = static_cast<std::size_t>(bitsPerElement(dtype));
+    if (bits != 0 && count > (std::numeric_limits<std::size_t>::max)() / bits) {
         return Status{StatusCode::kInvalidArgument, "tensor byte size overflows std::size_t"};
     }
+    totalBits = count * bits;
     if (totalBits > SIZE_MAX - 7) { // guard the round-up below from wrapping past SIZE_MAX
         return Status{StatusCode::kInvalidArgument, "tensor byte size overflows std::size_t"};
     }

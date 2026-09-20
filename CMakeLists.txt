@@ -1,6 +1,17 @@
 cmake_minimum_required(VERSION 3.22)
 project(tensorrt_cpp_api VERSION 7.0.0 LANGUAGES CXX)
 
+if(POLICY CMP0144)
+    cmake_policy(SET CMP0144 NEW)
+endif()
+
+include("D:/Code/3rdparty/3rdparty.cmake")
+
+set(PROJECT_OUTPUT_DIR "${PROJECT_BINARY_DIR}/../output")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_OUTPUT_DIR}")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${PROJECT_OUTPUT_DIR}")
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_OUTPUT_DIR}")
+
 # The engine core depends only on CUDA + TensorRT. The preprocessing sublibrary, OpenCV interop,
 # Python bindings, tests, and examples are independent, opt-in components; all default OFF except
 # the preprocessing sublibrary.
@@ -95,8 +106,23 @@ endif()
 # Optional spdlog logger adapter. PUBLIC so makeSpdlogLogger() is declared and
 # spdlog is linked for consumers of a spdlog-enabled install.
 if(TRT_CPP_API_WITH_SPDLOG)
-    find_package(spdlog REQUIRED)
-    target_link_libraries(tensorrt_cpp_api PUBLIC spdlog::spdlog)
+    find_package(spdlog CONFIG QUIET)
+    if(NOT spdlog_FOUND AND SPDLOG_ROOT AND EXISTS "${SPDLOG_ROOT}/CMakeLists.txt")
+        add_library(trtcpp_spdlog INTERFACE)
+        add_library(spdlog::spdlog ALIAS trtcpp_spdlog)
+        target_include_directories(trtcpp_spdlog INTERFACE "${SPDLOG_ROOT}/include")
+        target_compile_definitions(trtcpp_spdlog INTERFACE FMT_HEADER_ONLY)
+        target_link_libraries(trtcpp_spdlog INTERFACE Threads::Threads)
+    endif()
+    if(NOT TARGET spdlog::spdlog)
+        message(FATAL_ERROR
+            "Could not find or import spdlog. Set spdlog_DIR to an installed package or "
+            "SPDLOG_ROOT to the spdlog source directory.")
+    endif()
+    target_link_libraries(tensorrt_cpp_api PUBLIC "$<BUILD_INTERFACE:spdlog::spdlog>")
+    if(MSVC)
+        target_compile_options(tensorrt_cpp_api PRIVATE /utf-8)
+    endif()
     target_compile_definitions(tensorrt_cpp_api PUBLIC TRT_CPP_API_WITH_SPDLOG)
 endif()
 
@@ -118,7 +144,11 @@ if(TRT_CPP_API_BUILD_PREPROC)
     # during language init, and an unset value on hosts where nvcc can't self-detect a default
     # aborts configuration.
     if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-        set(CMAKE_CUDA_ARCHITECTURES 75-real 80-real 86-real 89-real 90-virtual)
+        if(CUDAToolkit_VERSION VERSION_LESS "12.0")
+            set(CMAKE_CUDA_ARCHITECTURES 75-real 80-real 86-real 89-real)
+        else()
+            set(CMAKE_CUDA_ARCHITECTURES 75-real 80-real 86-real 89-real 90-virtual)
+        endif()
     endif()
     enable_language(CUDA)
     add_library(tensorrt_cpp_api_preproc src/preproc.cu)
@@ -127,7 +157,7 @@ if(TRT_CPP_API_BUILD_PREPROC)
     target_compile_features(tensorrt_cpp_api_preproc PUBLIC cxx_std_20)
     set_target_properties(
         tensorrt_cpp_api_preproc
-        PROPERTIES CUDA_STANDARD 20
+        PROPERTIES CUDA_STANDARD 17
                    CUDA_STANDARD_REQUIRED ON
                    CXX_EXTENSIONS OFF
                    POSITION_INDEPENDENT_CODE ON # embeddable into shared libs (Python ext, sibling .so)

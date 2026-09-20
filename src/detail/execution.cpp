@@ -20,6 +20,7 @@ DType fromTrtDataType(nvinfer1::DataType type) {
         return DType::kBool;
     case nvinfer1::DataType::kUINT8:
         return DType::kUInt8;
+#if NV_TENSORRT_MAJOR >= 10
     case nvinfer1::DataType::kFP8:
         return DType::kFp8;
     case nvinfer1::DataType::kBF16:
@@ -28,6 +29,10 @@ DType fromTrtDataType(nvinfer1::DataType type) {
         return DType::kInt64;
     case nvinfer1::DataType::kINT4:
         return DType::kInt4;
+#else
+    case nvinfer1::DataType::kFP8:
+        return DType::kFp8;
+#endif
     }
     return DType::kFloat32;
 }

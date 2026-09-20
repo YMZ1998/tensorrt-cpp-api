@@ -3,6 +3,8 @@
 #include <array>
 #include <cstdint>
 #include <initializer_list>
+#include "tensorrt_cpp_api/span_compat.h"
+
 #include <span>
 #include <string>
 

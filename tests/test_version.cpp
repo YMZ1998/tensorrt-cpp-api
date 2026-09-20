@@ -11,7 +11,7 @@ TEST(Version, LibraryVersionIsSeven) {
 }
 
 TEST(Version, TensorRTBuildVersionRecorded) {
-    EXPECT_GE(tensorrtBuildMajor(), 10); // built against TensorRT >= 10
+    EXPECT_GE(tensorrtBuildMajor(), 8); // built against TensorRT >= 8.6
     EXPECT_LT(tensorrtBuildMajor(), 12);
 }
 

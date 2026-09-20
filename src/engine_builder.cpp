@@ -270,9 +270,17 @@ Result<std::vector<std::byte>> EngineBuilder::buildFromOnnxBytes(std::span<const
 
     const bool stronglyTyped = resolveStronglyTyped(options);
     uint32_t networkFlags = 0;
+#if NV_TENSORRT_MAJOR < 10
+    // TensorRT 8.x ONNX parsing requires an explicit-batch network.
+    networkFlags |= 1U << static_cast<uint32_t>(nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
+#endif
+#if NV_TENSORRT_MAJOR >= 10
     if (stronglyTyped) {
         networkFlags |= 1U << static_cast<uint32_t>(nvinfer1::NetworkDefinitionCreationFlag::kSTRONGLY_TYPED);
     }
+#else
+    (void)stronglyTyped;
+#endif
     TrtUniquePtr<nvinfer1::INetworkDefinition> network{builder->createNetworkV2(networkFlags)};
     if (!network) {
         return Status{StatusCode::kTensorRtError, "createNetworkV2 failed"};
