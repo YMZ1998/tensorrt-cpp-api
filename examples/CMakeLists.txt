@@ -20,6 +20,7 @@ endfunction()
 add_example(classification)
 add_example(detection)
 add_example(segmentation)
+add_example(segmentation_benchmark)
 
 # Inference-throughput benchmark (no image I/O, so no stb): the C++ baseline for the Python
 # zero-copy perf-parity check.
