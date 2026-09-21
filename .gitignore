@@ -39,6 +39,8 @@ cmake-build-*
 output/
 models/
 
+*.log
+*.jpg
 *.onnx
 *.pt
 
