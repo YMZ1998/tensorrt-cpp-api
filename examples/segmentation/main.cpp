@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "../common/image_io.h"
@@ -46,20 +47,76 @@ std::array<Rgb, 256> vocPalette() {
 int main(int argc, char **argv) {
     const std::string root = "D:/Code/tensorrt-cpp-api";
 
-    const std::string modelPath = root + "/models/mobilenetv2-7.onnx";
+    const std::string modelPath = root + "/models/deeplabv3_mobilenet_v3_large.onnx";
     const std::string imagePath = root + "/inputs/team.jpg";
     const std::string outPath = root + "/inputs/segmentation.jpg";
 
     BuildOptions bo;
     bo.precision = Precision::kFp16;
-    bo.engineCacheDir = "engines";
+    bo.engineCacheDir = root + "/models";
     auto engine = EngineBuilder{}.buildAndLoad(modelPath, bo);
     if (!engine) {
         std::fprintf(stderr, "engine: %s\n", engine.status().message().c_str());
         return 1;
     }
-    const std::string inName = engine->inputNames().front();
-    auto inShape = engine->tensorShape(inName).value(); // [1,3,H,W]
+    const auto inputNames = engine->inputNames();
+    const auto outputNames = engine->outputNames();
+    if (inputNames.size() != 1) {
+        std::fprintf(stderr, "segmentation expects exactly one input\n");
+        return 1;
+    }
+    if (outputNames.empty()) {
+        std::fprintf(stderr, "segmentation expects at least one output\n");
+        return 1;
+    }
+
+    const std::string inName = inputNames.front();
+    std::string outName;
+    std::string fallbackOutName;
+    for (const std::string &name : outputNames) {
+        auto shapeResult = engine->tensorShape(name);
+        auto dtypeResult = engine->tensorDType(name);
+        if (!shapeResult || !dtypeResult) {
+            continue;
+        }
+        const Shape shape = shapeResult.value();
+        const bool isSegmentationLogits =
+            *dtypeResult == DType::kFloat32 && shape.rank() == 4 && shape[0] == 1 && shape[1] > 1 && shape[2] > 0 && shape[3] > 0;
+        if (!isSegmentationLogits) {
+            continue;
+        }
+        if (fallbackOutName.empty()) {
+            fallbackOutName = name;
+        }
+        if (name == "out" || name.find("out") != std::string::npos) {
+            outName = name;
+            break;
+        }
+    }
+    if (outName.empty()) {
+        outName = fallbackOutName;
+    }
+    if (outName.empty()) {
+        std::fprintf(stderr, "could not find a float32 segmentation output [1,C,H,W]\n");
+        for (const std::string &name : outputNames) {
+            auto shapeResult = engine->tensorShape(name);
+            auto dtypeResult = engine->tensorDType(name);
+            if (shapeResult && dtypeResult) {
+                const std::string dtype = std::string(toString(dtypeResult.value()));
+                std::fprintf(stderr, "  output: %s shape=%s dtype=%s\n", name.c_str(), shapeResult->toString().c_str(),
+                             dtype.c_str());
+            }
+        }
+        return 1;
+    }
+
+    auto inShapeResult = engine->tensorShape(inName);
+    if (!inShapeResult || inShapeResult->rank() != 4 || (*inShapeResult)[0] != 1 || (*inShapeResult)[1] != 3 ||
+        (*inShapeResult)[2] <= 0 || (*inShapeResult)[3] <= 0) {
+        std::fprintf(stderr, "segmentation expects input shape [1,3,H,W]\n");
+        return 1;
+    }
+    const auto inShape = inShapeResult.value(); // [1,3,H,W]
     const int inH = static_cast<int>(inShape[2]);
     const int inW = static_cast<int>(inShape[3]);
 
@@ -76,12 +133,28 @@ int main(int argc, char **argv) {
         std::fprintf(stderr, "preproc: %s\n", s.message().c_str());
         return 1;
     }
-    auto out = engine->inferSingle({{inName, dst.view()}}, stream);
-    if (!out) {
-        std::fprintf(stderr, "infer: %s\n", out.status().message().c_str());
+    auto outputs = engine->infer({{inName, dst.view()}}, stream);
+    if (!outputs) {
+        std::fprintf(stderr, "infer: %s\n", outputs.status().message().c_str());
         return 1;
     }
-    auto host = out->toHost(stream).value();
+    auto outIt = outputs->find(outName);
+    if (outIt == outputs->end()) {
+        std::fprintf(stderr, "infer did not return selected output: %s\n", outName.c_str());
+        return 1;
+    }
+    auto hostResult = outIt->second.toHost(stream);
+    if (!hostResult) {
+        std::fprintf(stderr, "copy output to host: %s\n", hostResult.status().message().c_str());
+        return 1;
+    }
+    auto host = std::move(hostResult.value());
+    if (host.shape().rank() != 4 || host.shape()[0] != 1 || host.shape()[1] <= 0 || host.shape()[2] <= 0 || host.shape()[3] <= 0 ||
+        host.dtype() != DType::kFloat32) {
+        std::fprintf(stderr, "segmentation output %s must be float32 with shape [1,C,H,W], got shape %s\n", outName.c_str(),
+                     host.shape().toString().c_str());
+        return 1;
+    }
     auto logits = host.as<float>().value(); // [1, C, H, W], channels-first
     const int C = static_cast<int>(host.shape()[1]);
     const int H = static_cast<int>(host.shape()[2]);
