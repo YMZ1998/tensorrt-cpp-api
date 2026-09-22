@@ -186,25 +186,14 @@ else()
     set(TRTCPP_LIBRARY_TYPE STATIC)
 endif()
 
+include("${CMAKE_CURRENT_SOURCE_DIR}/src.cmake")
+
 add_library(tensorrt_cpp_api ${TRTCPP_LIBRARY_TYPE})
 add_library(tensorrt_cpp_api::tensorrt_cpp_api ALIAS tensorrt_cpp_api)
+
 target_sources(
     tensorrt_cpp_api
-    PRIVATE src/core.cpp
-            src/logger.cpp
-            src/cuda.cpp
-            src/allocator.cpp
-            src/device_tensor.cpp
-            src/engine_builder.cpp
-            src/engine.cpp
-            src/engine_pool.cpp
-            src/calibrator.cpp
-            src/detail/buffers.cpp
-            src/detail/calibrator_bridge.cpp
-            src/detail/engine_cache.cpp
-            src/detail/execution.cpp
-            src/detail/sha256.cpp
-            src/detail/trt_common.cpp
+    PRIVATE ${TRTCPP_CORE_SOURCES}
 )
 target_include_directories(tensorrt_cpp_api PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(tensorrt_cpp_api PUBLIC CUDA::cudart PRIVATE TensorRT::TensorRT Threads::Threads)
@@ -257,7 +246,7 @@ endif()
 # opt-in; the engine core has no OpenCV in any non-gated header.
 if(TRT_CPP_API_WITH_OPENCV)
     find_package(OpenCV REQUIRED COMPONENTS core imgproc)
-    target_sources(tensorrt_cpp_api PRIVATE src/opencv_interop.cpp src/oct_segmentation.cpp)
+    target_sources(tensorrt_cpp_api PRIVATE ${TRTCPP_OPENCV_SOURCES})
     target_link_libraries(tensorrt_cpp_api PUBLIC ${OpenCV_LIBS})
     target_include_directories(tensorrt_cpp_api PUBLIC ${OpenCV_INCLUDE_DIRS})
     target_compile_definitions(tensorrt_cpp_api PUBLIC TRT_CPP_API_WITH_OPENCV)

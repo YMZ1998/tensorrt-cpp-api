@@ -133,8 +133,7 @@ int main(int argc, char **argv) {
             auto shapeResult = engine->tensorShape(name);
             auto dtypeResult = engine->tensorDType(name);
             if (shapeResult && dtypeResult) {
-                const std::string dtype = std::string(toString(dtypeResult.value()));
-                std::fprintf(stderr, "  output: %s shape=%s dtype=%s\n", name.c_str(), shapeResult->toString().c_str(), dtype.c_str());
+                std::fprintf(stderr, "  output: %s \n", name.c_str());
             }
         }
         return 1;
