@@ -12,6 +12,7 @@
 #include "tensorrt_cpp_api/build_options.h"
 #include "tensorrt_cpp_api/cuda.h"
 #include "tensorrt_cpp_api/engine.h"
+#include "tensorrt_cpp_api/export.h"
 #include "tensorrt_cpp_api/status.h"
 
 namespace trtcpp::oct {
@@ -29,7 +30,7 @@ struct OctSegmentationOptions {
     int expectedClasses = 4;
 };
 
-class OctSegmentation {
+class TRT_CPP_API_EXPORT OctSegmentation {
 public:
     static Result<OctSegmentation> create(const std::string &onnxPath, OctSegmentationOptions options = {});
 

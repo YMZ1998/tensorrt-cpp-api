@@ -5,6 +5,7 @@
 
 #include "tensorrt_cpp_api/cuda.h"
 #include "tensorrt_cpp_api/dtype.h"
+#include "tensorrt_cpp_api/export.h"
 #include "tensorrt_cpp_api/status.h"
 #include "tensorrt_cpp_api/tensor.h"
 
@@ -32,6 +33,6 @@ struct PreprocSpec {
 /// writing `dst` with no intermediate buffers. Async on `stream` (no implicit sync).
 ///   src: HWC uint8 device tensor, shape [H,W,C] or [1,H,W,C].
 ///   dst: pre-allocated NCHW device tensor [1, C, Hout, Wout], dtype kFloat32 or kFloat16.
-Status letterboxToTensor(TensorView src, TensorView dst, const PreprocSpec &spec, const Stream &stream);
+TRT_CPP_API_EXPORT Status letterboxToTensor(TensorView src, TensorView dst, const PreprocSpec &spec, const Stream &stream);
 
 } // namespace trtcpp::preproc

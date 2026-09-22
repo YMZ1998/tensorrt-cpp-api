@@ -8,6 +8,7 @@
 
 #include "tensorrt_cpp_api/build_options.h"
 #include "tensorrt_cpp_api/engine.h"
+#include "tensorrt_cpp_api/export.h"
 #include "tensorrt_cpp_api/logger.h"
 #include "tensorrt_cpp_api/status.h"
 
@@ -17,7 +18,7 @@ namespace trtcpp {
 /// logger; one builder can build many engines. The cache-backed buildOrLoad and the
 /// build+deserialize buildAndLoad convenience entry points are provided by the cache
 /// and runtime modules respectively.
-class EngineBuilder {
+class TRT_CPP_API_EXPORT EngineBuilder {
 public:
     explicit EngineBuilder(std::shared_ptr<ILogger> logger = defaultLogger());
 

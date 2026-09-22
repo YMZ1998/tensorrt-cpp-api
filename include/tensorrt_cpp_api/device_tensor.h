@@ -4,6 +4,7 @@
 #include <span>
 
 #include "tensorrt_cpp_api/cuda.h"
+#include "tensorrt_cpp_api/export.h"
 #include "tensorrt_cpp_api/tensor.h"
 
 namespace trtcpp {
@@ -12,7 +13,7 @@ namespace trtcpp {
 /// (cudaMallocHost). Move-only. Returned when the library allocates outputs for the
 /// caller, and the type the Python bindings own. The owning counterpart
 /// to the non-owning TensorView.
-class Tensor {
+class TRT_CPP_API_EXPORT Tensor {
 public:
     Tensor() = default;
     ~Tensor();

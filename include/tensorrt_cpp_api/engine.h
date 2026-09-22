@@ -9,6 +9,7 @@
 #include "tensorrt_cpp_api/cuda.h"
 #include "tensorrt_cpp_api/device_tensor.h"
 #include "tensorrt_cpp_api/dtype.h"
+#include "tensorrt_cpp_api/export.h"
 #include "tensorrt_cpp_api/logger.h"
 #include "tensorrt_cpp_api/shape.h"
 #include "tensorrt_cpp_api/status.h"
@@ -33,7 +34,7 @@ struct TensorInfo {
 /// A loaded TensorRT engine. Thread-COMPATIBLE, not thread-safe: for concurrent inference
 /// use EnginePool. TensorRT types are hidden behind a PImpl, so this header pulls in no
 /// nvinfer1. The owning ICudaEngine/IExecutionContext/IRuntime are released on destruction.
-class Engine {
+class TRT_CPP_API_EXPORT Engine {
 public:
     Engine(Engine &&) noexcept;
     Engine &operator=(Engine &&) noexcept;

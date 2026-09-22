@@ -24,6 +24,7 @@ option(TRT_CPP_API_BUILD_PREPROC "Build the fused preprocessing sublibrary" ON)
 option(TRT_CPP_API_BUILD_PYTHON "Build the pybind11 Python bindings" OFF)
 option(TRT_CPP_API_WITH_OPENCV "Build the optional OpenCV interop" ON)
 option(TRT_CPP_API_WITH_SPDLOG "Build the optional spdlog logger adapter" ON)
+option(TRT_CPP_API_BUILD_SHARED "Build tensorrt_cpp_api as a shared library" ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
@@ -179,7 +180,13 @@ configure_file(
     @ONLY
 )
 
-add_library(tensorrt_cpp_api)
+if(TRT_CPP_API_BUILD_SHARED)
+    set(TRTCPP_LIBRARY_TYPE SHARED)
+else()
+    set(TRTCPP_LIBRARY_TYPE STATIC)
+endif()
+
+add_library(tensorrt_cpp_api ${TRTCPP_LIBRARY_TYPE})
 add_library(tensorrt_cpp_api::tensorrt_cpp_api ALIAS tensorrt_cpp_api)
 target_sources(
     tensorrt_cpp_api
@@ -209,13 +216,15 @@ target_include_directories(
                             $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>
 )
 target_compile_features(tensorrt_cpp_api PUBLIC cxx_std_20)
-# POSITION_INDEPENDENT_CODE: the static core is routinely linked into shared objects -- the Python
-# extension and downstream shared libraries such as the YOLO sibling repos' libYoloV8_TRT.so -- so
-# it must be PIC. (Negligible cost; standard for an embeddable static library.)
+# Keep position-independent code enabled in both library modes so the core can also be embedded in
+# downstream shared libraries.
 set_target_properties(
     tensorrt_cpp_api PROPERTIES CXX_EXTENSIONS OFF POSITION_INDEPENDENT_CODE ON VERSION ${PROJECT_VERSION}
                                 SOVERSION ${PROJECT_VERSION_MAJOR}
 )
+if(WIN32 AND TRT_CPP_API_BUILD_SHARED)
+    target_compile_definitions(tensorrt_cpp_api PUBLIC TRT_CPP_API_BUILD_SHARED)
+endif()
 if(NOT MSVC)
     target_compile_options(tensorrt_cpp_api PRIVATE -Wall -Wextra)
 endif()

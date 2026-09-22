@@ -8,11 +8,13 @@
 #include <span>
 #include <string>
 
+#include "tensorrt_cpp_api/export.h"
+
 namespace trtcpp {
 
 /// A dynamic-aware tensor shape with fixed inline capacity (no heap). A dim of -1 means
 /// "dynamic / unresolved" (TensorRT's convention). Rank 0 is a scalar (numel 1).
-class Shape {
+class TRT_CPP_API_EXPORT Shape {
 public:
     /// Matches nvinfer1::Dims::MAX_DIMS; static_assert'd against it once TRT is linked.
     static constexpr int kMaxRank = 8;

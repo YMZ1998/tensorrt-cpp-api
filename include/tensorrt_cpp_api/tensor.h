@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "tensorrt_cpp_api/dtype.h"
+#include "tensorrt_cpp_api/export.h"
 #include "tensorrt_cpp_api/layout.h"
 #include "tensorrt_cpp_api/shape.h"
 #include "tensorrt_cpp_api/status.h"
@@ -20,7 +21,7 @@ namespace trtcpp {
 /// setTensorAddress + setInputShape and to build DLPack / __cuda_array_interface__.
 ///
 /// The owning Tensor (allocate/toHost/copyFrom) is CUDA-backed.
-class TensorView {
+class TRT_CPP_API_EXPORT TensorView {
 public:
     struct Desc {
         void *data = nullptr;

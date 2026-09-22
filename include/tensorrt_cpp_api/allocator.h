@@ -4,6 +4,7 @@
 #include <memory>
 
 #include "tensorrt_cpp_api/cuda.h"
+#include "tensorrt_cpp_api/export.h"
 
 namespace trtcpp {
 
@@ -11,7 +12,7 @@ namespace trtcpp {
 /// arena. The default (defaultDeviceAllocator) is stream-ordered (cudaMallocAsync) from a
 /// private pool. Used by the engine's buffer management; the standalone owning Tensor
 /// uses synchronous cudaMalloc since it has no stream at construction.
-class IDeviceAllocator {
+class TRT_CPP_API_EXPORT IDeviceAllocator {
 public:
     virtual ~IDeviceAllocator() = default;
     /// Returns device memory ordered on `stream`, or nullptr on failure. `alignment` is a
@@ -25,6 +26,6 @@ public:
 /// Stream-ordered allocator backed by a private CUDA memory pool with the release
 /// threshold set to UINT64_MAX (freed memory is retained for reuse across iterations
 /// rather than returned to the OS on every sync -- the documented best practice).
-std::shared_ptr<IDeviceAllocator> defaultDeviceAllocator(int deviceIndex = 0);
+TRT_CPP_API_EXPORT std::shared_ptr<IDeviceAllocator> defaultDeviceAllocator(int deviceIndex = 0);
 
 } // namespace trtcpp

@@ -10,6 +10,7 @@
 #include "tensorrt_cpp_api/cuda.h"
 #include "tensorrt_cpp_api/device_tensor.h"
 #include "tensorrt_cpp_api/engine.h" // EngineOptions, TensorInfo
+#include "tensorrt_cpp_api/export.h"
 #include "tensorrt_cpp_api/shape.h"
 #include "tensorrt_cpp_api/status.h"
 #include "tensorrt_cpp_api/tensor.h"
@@ -25,11 +26,11 @@ struct PoolState; // defined in engine_pool.cpp
 /// 11 requires each concurrently-used context to bind a distinct optimization profile, so a
 /// dynamic-shape engine must be built with >= `contexts` profiles (create() rejects
 /// otherwise). Each lease runs on the caller's stream.
-class EnginePool {
+class TRT_CPP_API_EXPORT EnginePool {
 public:
     /// A borrowed execution context (+ its bound profile). Returns the context to the pool
     /// on destruction. Move-only.
-    class Lease {
+    class TRT_CPP_API_EXPORT Lease {
     public:
         Lease() = default;
         Lease(Lease &&other) noexcept;

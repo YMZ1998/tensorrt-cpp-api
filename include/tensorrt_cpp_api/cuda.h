@@ -7,6 +7,7 @@
 
 #include <cuda_runtime.h>
 
+#include "tensorrt_cpp_api/export.h"
 #include "tensorrt_cpp_api/status.h"
 
 // CUDA is a hard dependency of the engine core (caller-provided streams cross the public
@@ -17,7 +18,7 @@ namespace trtcpp {
 
 /// Convert a CUDA error code into a Status (kOk on cudaSuccess). `context` prefixes the
 /// message, e.g. cudaToStatus(err, "cudaMalloc").
-Status cudaToStatus(cudaError_t code, std::string_view context = {});
+TRT_CPP_API_EXPORT Status cudaToStatus(cudaError_t code, std::string_view context = {});
 
 /// RAII CUDA stream. Either OWNS a stream it created, or WRAPS a caller-provided one
 /// (non-owning) -- the model that callers asked for and the Python bindings
@@ -26,7 +27,7 @@ Status cudaToStatus(cudaError_t code, std::string_view context = {});
 /// A default-constructed Stream owns a new non-blocking stream; if creation fails (only
 /// under catastrophic OOM) it degrades to the CUDA default stream (non-owning). Use
 /// Stream::create() when you need to observe that failure.
-class Stream {
+class TRT_CPP_API_EXPORT Stream {
 public:
     Stream();
     static Result<Stream> create();                       ///< owned non-blocking stream, error-checked
@@ -59,7 +60,7 @@ struct DeviceInfo {
     std::size_t totalMemoryBytes = 0;
 };
 
-Result<int> deviceCount();
-Result<DeviceInfo> queryDevice(int index);
+TRT_CPP_API_EXPORT Result<int> deviceCount();
+TRT_CPP_API_EXPORT Result<DeviceInfo> queryDevice(int index);
 
 } // namespace trtcpp

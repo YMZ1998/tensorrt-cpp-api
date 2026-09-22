@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "tensorrt_cpp_api/cuda.h"
+#include "tensorrt_cpp_api/export.h"
 #include "tensorrt_cpp_api/shape.h"
 #include "tensorrt_cpp_api/tensor.h"
 
@@ -25,7 +26,7 @@ namespace trtcpp {
 /// input device buffers (views over TensorRT's calibration buffers) with PRE-PROCESSED data
 /// -- using the SAME preprocessing as inference, to avoid the v6 calibration/inference
 /// mismatch.
-class ICalibrator {
+class TRT_CPP_API_EXPORT ICalibrator {
 public:
     virtual ~ICalibrator() = default;
     virtual int batchSize() const = 0;
@@ -41,8 +42,9 @@ public:
 /// needs neither OpenCV nor the preprocessing sublibrary. (The decode+preprocess
 /// "image directory" convenience lives in the OpenCV interop module.) `cachePath`, if set,
 /// persists the calibration table.
-std::shared_ptr<ICalibrator> makeRawBatchCalibrator(std::string inputName, Shape batchShape, std::vector<std::string> batchFiles,
-                                                    std::string cachePath = {});
+TRT_CPP_API_EXPORT std::shared_ptr<ICalibrator> makeRawBatchCalibrator(std::string inputName, Shape batchShape,
+                                                                        std::vector<std::string> batchFiles,
+                                                                        std::string cachePath = {});
 
 } // namespace trtcpp
 
