@@ -134,16 +134,15 @@ int main(int argc, char **argv) {
             auto dtypeResult = engine->tensorDType(name);
             if (shapeResult && dtypeResult) {
                 const std::string dtype = std::string(toString(dtypeResult.value()));
-                std::fprintf(stderr, "  output: %s shape=%s dtype=%s\n", name.c_str(), shapeResult->toString().c_str(),
-                             dtype.c_str());
+                std::fprintf(stderr, "  output: %s shape=%s dtype=%s\n", name.c_str(), shapeResult->toString().c_str(), dtype.c_str());
             }
         }
         return 1;
     }
 
     auto inShapeResult = engine->tensorShape(inName);
-    if (!inShapeResult || inShapeResult->rank() != 4 || (*inShapeResult)[0] != 1 || (*inShapeResult)[1] != 1 ||
-        (*inShapeResult)[2] <= 0 || (*inShapeResult)[3] <= 0) {
+    if (!inShapeResult || inShapeResult->rank() != 4 || (*inShapeResult)[0] != 1 || (*inShapeResult)[1] != 1 || (*inShapeResult)[2] <= 0 ||
+        (*inShapeResult)[3] <= 0) {
         std::fprintf(stderr, "segmentation expects input shape [1,1,H,W]\n");
         return 1;
     }
@@ -169,6 +168,27 @@ int main(int argc, char **argv) {
     if (auto s = dst.copyFrom(hostInput, stream); !s) {
         std::fprintf(stderr, "upload input: %s\n", s.message().c_str());
         return 1;
+    }
+
+    auto runOnce = [&]() -> Result<double> {
+        const auto start = std::chrono::steady_clock::now();
+        auto outputs = engine->infer({{inName, dst.view()}}, stream);
+        if (!outputs) {
+            return outputs.status();
+        }
+        if (auto s = stream.synchronize(); !s) {
+            return s;
+        }
+        const auto end = std::chrono::steady_clock::now();
+        return std::chrono::duration<double, std::milli>(end - start).count();
+    };
+
+    for (int i = 0; i < 5; ++i) {
+        auto elapsed = runOnce();
+        if (!elapsed) {
+            std::fprintf(stderr, "warmup infer: %s\n", elapsed.status().message().c_str());
+            return 1;
+        }
     }
 
     const auto inferStart = std::chrono::steady_clock::now();
@@ -241,8 +261,7 @@ int main(int argc, char **argv) {
         for (int x = 0; x < img.width; ++x) {
             const int sx = x * W / img.width;
             const std::uint8_t cls = classMap[static_cast<std::size_t>(sy) * W + sx];
-            const std::uint8_t value =
-                C == 1 ? static_cast<std::uint8_t>(cls * 255) : static_cast<std::uint8_t>(cls * 255 / (C - 1));
+            const std::uint8_t value = C == 1 ? static_cast<std::uint8_t>(cls * 255) : static_cast<std::uint8_t>(cls * 255 / (C - 1));
             auto *px = &prediction.data[(static_cast<std::size_t>(y) * img.width + x) * 3];
             px[0] = value;
             px[1] = value;

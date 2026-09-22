@@ -51,6 +51,53 @@ find_package(CUDAToolkit REQUIRED)
 # -DTensorRT_DIR=<root> for a tarball install.
 find_package(TensorRT REQUIRED)
 
+# Windows executables do not search the TensorRT/CUDA installation directories
+# automatically. Keep the reference binaries runnable from the build output by
+# copying the runtime DLLs next to each executable.
+function(trtcpp_copy_windows_runtime_dlls target)
+    if(NOT WIN32)
+        return()
+    endif()
+
+    set(_trt_root "")
+    if(TENSORRT_ROOT)
+        set(_trt_root "${TENSORRT_ROOT}")
+    elseif(TensorRT_DIR)
+        set(_trt_root "${TensorRT_DIR}")
+    elseif(TensorRT_INCLUDE_DIR)
+        get_filename_component(_trt_root "${TensorRT_INCLUDE_DIR}" DIRECTORY)
+    endif()
+
+    if(_trt_root)
+        set(_trt_runtime_dlls "${_trt_root}/lib/nvinfer.dll" "${_trt_root}/lib/nvonnxparser.dll")
+    endif()
+    if(CUDNN_ROOT)
+        set(_cudnn_runtime_dlls
+            "${CUDNN_ROOT}/bin/cudnn64_8.dll"
+            "${CUDNN_ROOT}/bin/cudnn_ops_infer64_8.dll"
+            "${CUDNN_ROOT}/bin/cudnn_ops_train64_8.dll")
+    endif()
+    if(CUDAToolkit_BIN_DIR)
+        set(_cuda_runtime_dlls
+            "${CUDAToolkit_BIN_DIR}/cublasLt64_11.dll"
+            "${CUDAToolkit_BIN_DIR}/cublas64_11.dll"
+            "${CUDAToolkit_BIN_DIR}/cudart64_110.dll"
+            "${CUDAToolkit_BIN_DIR}/cusparse64_11.dll")
+    endif()
+
+    set(_runtime_dlls ${_trt_runtime_dlls} ${_cudnn_runtime_dlls} ${_cuda_runtime_dlls})
+    foreach(_dll IN LISTS _runtime_dlls)
+        if(EXISTS "${_dll}")
+            add_custom_command(
+                TARGET ${target}
+                POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_dll}" "$<TARGET_FILE_DIR:${target}>"
+                VERBATIM
+            )
+        endif()
+    endforeach()
+endfunction()
+
 # Threads: the logger and EnginePool use std::mutex/condition_variable. Linked PRIVATE
 # (PImpl, so no thread types in public headers); the package config re-resolves it.
 find_package(Threads REQUIRED)
