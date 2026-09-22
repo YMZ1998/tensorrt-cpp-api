@@ -178,7 +178,7 @@ endif()
 # opt-in; the engine core has no OpenCV in any non-gated header.
 if(TRT_CPP_API_WITH_OPENCV)
     find_package(OpenCV REQUIRED COMPONENTS core)
-    target_sources(tensorrt_cpp_api PRIVATE src/opencv_interop.cpp)
+    target_sources(tensorrt_cpp_api PRIVATE src/opencv_interop.cpp src/oct_segmentation.cpp)
     target_link_libraries(tensorrt_cpp_api PUBLIC ${OpenCV_LIBS})
     target_include_directories(tensorrt_cpp_api PUBLIC ${OpenCV_INCLUDE_DIRS})
     target_compile_definitions(tensorrt_cpp_api PUBLIC TRT_CPP_API_WITH_OPENCV)

@@ -9,6 +9,11 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     find_package(tensorrt_cpp_api REQUIRED)
 endif()
 
+if(NOT COMMAND trtcpp_copy_windows_runtime_dlls)
+    function(trtcpp_copy_windows_runtime_dlls target)
+    endfunction()
+endif()
+
 # Image decode/encode is handled by the vendored stb single-header libs (common/), so the
 # examples have NO third-party image dependency -- they build anywhere the library does.
 function(add_example name)
@@ -22,6 +27,13 @@ add_example(classification)
 add_example(detection)
 add_example(segmentation)
 add_example(segmentation_benchmark)
+if(TRT_CPP_API_WITH_OPENCV)
+    find_package(OpenCV REQUIRED COMPONENTS imgcodecs)
+    add_executable(oct_segmentation oct_segmentation/main.cpp)
+    target_link_libraries(oct_segmentation PRIVATE tensorrt_cpp_api::tensorrt_cpp_api ${OpenCV_LIBS})
+    target_compile_features(oct_segmentation PRIVATE cxx_std_20)
+    trtcpp_copy_windows_runtime_dlls(oct_segmentation)
+endif()
 
 # Inference-throughput benchmark (no image I/O, so no stb): the C++ baseline for the Python
 # zero-copy perf-parity check.
