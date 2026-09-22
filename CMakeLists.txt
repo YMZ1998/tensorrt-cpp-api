@@ -173,11 +173,11 @@ if(TRT_CPP_API_WITH_SPDLOG)
     target_compile_definitions(tensorrt_cpp_api PUBLIC TRT_CPP_API_WITH_SPDLOG)
 endif()
 
-# Optional OpenCV interop. Requests only the `core` module (which carries cv::Mat
-# and cv::cuda::GpuMat) to avoid pulling opencv_dnn and its cuDNN dependency. Strictly
+# Optional OpenCV interop. Requests only the `core` and `imgproc` modules (which carry
+# cv::Mat and the OCT preprocessing operations) to avoid pulling opencv_dnn and its cuDNN dependency. Strictly
 # opt-in; the engine core has no OpenCV in any non-gated header.
 if(TRT_CPP_API_WITH_OPENCV)
-    find_package(OpenCV REQUIRED COMPONENTS core)
+    find_package(OpenCV REQUIRED COMPONENTS core imgproc)
     target_sources(tensorrt_cpp_api PRIVATE src/opencv_interop.cpp src/oct_segmentation.cpp)
     target_link_libraries(tensorrt_cpp_api PUBLIC ${OpenCV_LIBS})
     target_include_directories(tensorrt_cpp_api PUBLIC ${OpenCV_INCLUDE_DIRS})

@@ -1,8 +1,9 @@
-// Smoke test for the OpenCV-facing OCT segmentation wrapper.
+// OCT image segmentation example with reusable inference buffers and stage timing.
 
-#include <chrono>
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <utility>
 
@@ -14,24 +15,40 @@
 namespace {
 
 cv::Mat visualizeMask(const cv::Mat &mask, int classes) {
-    cv::Mat visual(mask.rows, mask.cols, CV_8UC1);
+    cv::Mat visual;
+    mask.convertTo(visual, CV_8UC1, 255.0 / static_cast<double>(classes - 1));
+    return visual;
+}
+
+bool validateMask(const cv::Mat &mask, const cv::Size &expectedSize, int classes, int *hist) {
+    if (mask.type() != CV_8UC1 || mask.size() != expectedSize) {
+        std::fprintf(stderr, "unexpected mask shape or type\n");
+        return false;
+    }
+
+    std::fill(hist, hist + classes, 0);
     for (int y = 0; y < mask.rows; ++y) {
-        const auto *src = mask.ptr<std::uint8_t>(y);
-        auto *dst = visual.ptr<std::uint8_t>(y);
+        const auto *row = mask.ptr<std::uint8_t>(y);
         for (int x = 0; x < mask.cols; ++x) {
-            dst[x] = static_cast<std::uint8_t>(src[x] * 255 / (classes - 1));
+            const int classId = row[x];
+            if (classId >= classes) {
+                std::fprintf(stderr, "unexpected class id: %d\n", classId);
+                return false;
+            }
+            ++hist[classId];
         }
     }
-    return visual;
+    return true;
 }
 
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
     const std::string root = "D:/Code/tensorrt-cpp-api";
-    const std::string modelPath = root + "/models/efficientnet_b1_best_model.onnx";
-    const std::string imagePath = root + "/inputs/input.png";
-    const std::string outPath = root + "/inputs/oct_segmentation_mask.png";
+    const std::string modelPath = argc > 1 ? argv[1] : root + "/models/efficientnet_b1_best_model.onnx";
+    const std::string imagePath = argc > 2 ? argv[2] : root + "/inputs/input.png";
+    const std::string outPath = argc > 3 ? argv[3] : root + "/inputs/oct_segmentation_mask.png";
+    const int iterations = argc > 4 ? std::max(1, std::atoi(argv[4])) : 10;
 
     cv::Mat gray = cv::imread(imagePath, cv::IMREAD_GRAYSCALE);
     if (gray.empty()) {
@@ -49,43 +66,71 @@ int main() {
         return 1;
     }
 
-    const auto start = std::chrono::steady_clock::now();
-    auto maskResult = segmenter->predict(gray);
-    const auto end = std::chrono::steady_clock::now();
-    if (!maskResult) {
-        std::fprintf(stderr, "oct segmentation predict: %s\n", maskResult.status().message().c_str());
+    // The first call initializes image-size-dependent OpenCV buffers and warms TensorRT.
+    auto warmupResult = segmenter->predict(gray);
+    if (!warmupResult) {
+        std::fprintf(stderr, "oct segmentation warmup: %s\n", warmupResult.status().message().c_str());
         return 1;
     }
-    const double predictMs = std::chrono::duration<double, std::milli>(end - start).count();
+    const auto warmupTiming = segmenter->lastTiming();
 
-    cv::Mat mask = std::move(maskResult.value());
-    if (mask.type() != CV_8UC1 || mask.rows != gray.rows || mask.cols != gray.cols) {
-        std::fprintf(stderr, "unexpected mask shape or type\n");
-        return 1;
-    }
+    double preprocessTotalMs = 0.0;
+    double inferenceTotalMs = 0.0;
+    double postprocessTotalMs = 0.0;
+    double totalMs = 0.0;
+    cv::Mat mask;
 
-    int hist[4] = {};
-    for (int y = 0; y < mask.rows; ++y) {
-        const auto *row = mask.ptr<std::uint8_t>(y);
-        for (int x = 0; x < mask.cols; ++x) {
-            if (row[x] >= 4) {
-                std::fprintf(stderr, "unexpected class id: %u\n", static_cast<unsigned>(row[x]));
-                return 1;
-            }
-            ++hist[row[x]];
+    for (int i = 0; i < iterations; ++i) {
+        auto maskResult = segmenter->predict(gray);
+        if (!maskResult) {
+            std::fprintf(stderr, "oct segmentation predict %d: %s\n", i, maskResult.status().message().c_str());
+            return 1;
         }
+
+        // This is a shallow view of the segmenter's reusable output buffer. Consume it
+        // before the next predict() call; clone only when persistent ownership is needed.
+        mask = maskResult.value();
+        const auto timing = segmenter->lastTiming();
+        preprocessTotalMs += timing.preprocessMs;
+        inferenceTotalMs += timing.inferenceMs;
+        postprocessTotalMs += timing.postprocessMs;
+        totalMs += timing.totalMs;
     }
 
-    if (!cv::imwrite(outPath, visualizeMask(mask, segmenter->classes()))) {
+    const int classes = segmenter->classes();
+    int hist[4] = {};
+    if (classes != 4 || !validateMask(mask, gray.size(), classes, hist)) {
+        return 1;
+    }
+
+    cv::Mat visual = visualizeMask(mask, classes);
+    if (!cv::imwrite(outPath, visual)) {
         std::fprintf(stderr, "could not write image: %s\n", outPath.c_str());
         return 1;
     }
 
+    const double count = static_cast<double>(iterations);
+    const double averageTotalMs = totalMs / count;
     std::printf("oct segmentation mask: %dx%d CV_8UC1\n", mask.cols, mask.rows);
-    std::printf("prediction time: %.3f ms\n", predictMs);
-    for (int i = 0; i < 4; ++i) {
+    std::printf(
+        "warmup: total %.3f ms, preprocess %.3f ms, inference %.3f ms, postprocess %.3f ms\n",
+        warmupTiming.totalMs,
+        warmupTiming.preprocessMs,
+        warmupTiming.inferenceMs,
+        warmupTiming.postprocessMs);
+    std::printf(
+        "steady state (%d runs): total %.3f ms, preprocess %.3f ms, inference %.3f ms, postprocess %.3f ms, %.2f FPS\n",
+        iterations,
+        averageTotalMs,
+        preprocessTotalMs / count,
+        inferenceTotalMs / count,
+        postprocessTotalMs / count,
+        1000.0 / averageTotalMs);
+
+    const double pixels = static_cast<double>(mask.rows) * mask.cols;
+    for (int i = 0; i < classes; ++i) {
         if (hist[i] > 0) {
-            std::printf("  class %d: %.1f%%\n", i, 100.0 * hist[i] / (mask.rows * mask.cols));
+            std::printf("  class %d: %.1f%%\n", i, 100.0 * hist[i] / pixels);
         }
     }
     std::printf("wrote %s\n", outPath.c_str());

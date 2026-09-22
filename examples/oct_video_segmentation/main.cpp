@@ -107,6 +107,9 @@ int main(int argc, char **argv) {
     }
 
     std::vector<double> predictionTimes;
+    double preprocessTotalMs = 0.0;
+    double inferenceTotalMs = 0.0;
+    double postprocessTotalMs = 0.0;
     cv::Mat frame;
     int processedFrames = 0;
     while (capture.read(frame)) {
@@ -124,22 +127,31 @@ int main(int argc, char **argv) {
             cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
         }
 
-        const auto start = std::chrono::steady_clock::now();
         auto maskResult = segmenter->predict(gray);
-        const auto end = std::chrono::steady_clock::now();
         if (!maskResult) {
             std::fprintf(stderr, "predict failed at frame %d: %s\n", processedFrames, maskResult.status().message().c_str());
             return 1;
         }
 
-        const double predictionMs = std::chrono::duration<double, std::milli>(end - start).count();
+        const auto timing = segmenter->lastTiming();
+        const double predictionMs = timing.totalMs;
         predictionTimes.push_back(predictionMs);
+        preprocessTotalMs += timing.preprocessMs;
+        inferenceTotalMs += timing.inferenceMs;
+        postprocessTotalMs += timing.postprocessMs;
         cv::Mat overlay = makeOverlay(frame, maskResult.value());
 
         const double averageMs =
             std::accumulate(predictionTimes.begin(), predictionTimes.end(), 0.0) / static_cast<double>(predictionTimes.size());
         char text[256] = {};
-        std::snprintf(text, sizeof(text), "frame: %d  predict: %.2f ms  avg: %.2f ms", processedFrames + 1, predictionMs, averageMs);
+        std::snprintf(
+            text,
+            sizeof(text),
+            "frame: %d  total: %.2f ms  infer: %.2f ms  avg: %.2f ms",
+            processedFrames + 1,
+            predictionMs,
+            timing.inferenceMs,
+            averageMs);
         cv::putText(overlay, text, cv::Point(20, 35), cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 255), 2, cv::LINE_AA);
 
         writer.write(overlay);
@@ -165,12 +177,21 @@ int main(int argc, char **argv) {
 
     const double totalMs = std::accumulate(predictionTimes.begin(), predictionTimes.end(), 0.0);
     const double averageMs = totalMs / static_cast<double>(predictionTimes.size());
+    const double averagePreprocessMs = preprocessTotalMs / static_cast<double>(processedFrames);
+    const double averageInferenceMs = inferenceTotalMs / static_cast<double>(processedFrames);
+    const double averagePostprocessMs = postprocessTotalMs / static_cast<double>(processedFrames);
     std::printf("processed frames: %d", processedFrames);
     if (frameCount > 0) {
         std::printf("/%d", frameCount);
     }
     std::printf("\n");
-    std::printf("prediction time: avg %.3f ms, %.2f FPS\n", averageMs, 1000.0 / averageMs);
+    std::printf(
+        "prediction time: avg total %.3f ms, preprocess %.3f ms, inference %.3f ms, postprocess %.3f ms, %.2f FPS\n",
+        averageMs,
+        averagePreprocessMs,
+        averageInferenceMs,
+        averagePostprocessMs,
+        1000.0 / averageMs);
     std::printf("wrote %s\n", outputPath.c_str());
     return 0;
 }

@@ -3,11 +3,12 @@
 #ifdef TRT_CPP_API_WITH_OPENCV
 
 #include <algorithm>
-#include <cmath>
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <utility>
-#include <vector>
+
+#include <opencv2/imgproc.hpp>
 
 #include "tensorrt_cpp_api/device_tensor.h"
 #include "tensorrt_cpp_api/dtype.h"
@@ -17,53 +18,6 @@
 
 namespace trtcpp::oct {
 namespace {
-
-float maskedGrayAt(const cv::Mat &gray, int x, int y) {
-    x = std::clamp(x, 0, gray.cols - 1);
-    y = std::clamp(y, 0, gray.rows - 1);
-
-    const float cx = (static_cast<float>(gray.cols) - 1.0f) * 0.5f;
-    const float cy = (static_cast<float>(gray.rows) - 1.0f) * 0.5f;
-    const float radius = static_cast<float>(std::min(gray.cols, gray.rows)) * 0.5f;
-    const float dx = static_cast<float>(x) - cx;
-    const float dy = static_cast<float>(y) - cy;
-    if (dx * dx + dy * dy > radius * radius) {
-        return 0.0f;
-    }
-
-    return static_cast<float>(gray.ptr<std::uint8_t>(y)[x]);
-}
-
-std::vector<float> preprocessOctMinusOneToOne(const cv::Mat &gray, int outH, int outW) {
-    std::vector<float> chw(static_cast<std::size_t>(outH) * outW);
-    const float scaleY = static_cast<float>(gray.rows) / static_cast<float>(outH);
-    const float scaleX = static_cast<float>(gray.cols) / static_cast<float>(outW);
-
-    for (int y = 0; y < outH; ++y) {
-        const float sy = (static_cast<float>(y) + 0.5f) * scaleY - 0.5f;
-        const int y0 = static_cast<int>(std::floor(sy));
-        const int y1 = y0 + 1;
-        const float wy = sy - static_cast<float>(y0);
-        for (int x = 0; x < outW; ++x) {
-            const float sx = (static_cast<float>(x) + 0.5f) * scaleX - 0.5f;
-            const int x0 = static_cast<int>(std::floor(sx));
-            const int x1 = x0 + 1;
-            const float wx = sx - static_cast<float>(x0);
-
-            const float v00 = maskedGrayAt(gray, x0, y0);
-            const float v01 = maskedGrayAt(gray, x1, y0);
-            const float v10 = maskedGrayAt(gray, x0, y1);
-            const float v11 = maskedGrayAt(gray, x1, y1);
-            const float top = v00 + (v01 - v00) * wx;
-            const float bottom = v10 + (v11 - v10) * wx;
-            const float pixel = top + (bottom - top) * wy;
-
-            chw[static_cast<std::size_t>(y) * outW + x] = pixel / 127.5f - 1.0f;
-        }
-    }
-
-    return chw;
-}
 
 Result<std::string> findOutputName(Engine &engine, int expectedClasses) {
     const auto outputNames = engine.outputNames();
@@ -85,17 +39,73 @@ Result<std::string> findOutputName(Engine &engine, int expectedClasses) {
 
 } // namespace
 
-OctSegmentation::OctSegmentation(Engine engine, std::string inputName, std::string outputName, int inputH, int inputW, int expectedClasses)
-    : engine_(std::move(engine)), inputName_(std::move(inputName)), outputName_(std::move(outputName)), inputH_(inputH), inputW_(inputW),
+OctSegmentation::OctSegmentation(
+    Engine engine,
+    std::string inputName,
+    std::string outputName,
+    int inputH,
+    int inputW,
+    int outputH,
+    int outputW,
+    int expectedClasses)
+    : engine_(std::move(engine)),
+      inputName_(std::move(inputName)),
+      outputName_(std::move(outputName)),
+      inputH_(inputH),
+      inputW_(inputW),
+      outputH_(outputH),
+      outputW_(outputW),
       expectedClasses_(expectedClasses) {}
 
 OctSegmentation::OctSegmentation(OctSegmentation &&) noexcept = default;
 OctSegmentation &OctSegmentation::operator=(OctSegmentation &&) noexcept = default;
 OctSegmentation::~OctSegmentation() = default;
 
+Status OctSegmentation::initializeBuffers() {
+    const Shape inputShape{1, 1, inputH_, inputW_};
+    const Shape outputShape{1, expectedClasses_, outputH_, outputW_};
+
+    TRTCPP_TRY(auto inputHost, Tensor::allocate(DType::kFloat32, inputShape, Device::kHost));
+    TRTCPP_TRY(auto inputDevice, Tensor::allocate(DType::kFloat32, inputShape, Device::kCuda));
+    TRTCPP_TRY(auto outputDevice, Tensor::allocate(DType::kFloat32, outputShape, Device::kCuda));
+    TRTCPP_TRY(auto outputHost, Tensor::allocate(DType::kFloat32, outputShape, Device::kHost));
+    inputHost_ = std::move(inputHost);
+    inputDevice_ = std::move(inputDevice);
+    outputDevice_ = std::move(outputDevice);
+    outputHost_ = std::move(outputHost);
+
+    floatInput_ = cv::Mat(inputH_, inputW_, CV_32FC1, inputHost_.data());
+    classMap_.create(outputH_, outputW_, CV_8UC1);
+    inputs_.clear();
+    outputs_.clear();
+    inputs_.emplace(inputName_, inputDevice_.view());
+    outputs_.emplace(outputName_, outputDevice_.view());
+    return {};
+}
+
+Status OctSegmentation::preparePreprocessBuffers(int rows, int cols) {
+    if (rows <= 0 || cols <= 0) {
+        return Status{StatusCode::kInvalidArgument, "input cv::Mat dimensions must be positive"};
+    }
+    if (!roiMask_.empty() && roiMask_.rows == rows && roiMask_.cols == cols) {
+        return {};
+    }
+
+    roiMask_.create(rows, cols, CV_8UC1);
+    roiMask_.setTo(cv::Scalar::all(0));
+    const cv::Point center((cols - 1) / 2, (rows - 1) / 2);
+    const int radius = std::min(rows, cols) / 2;
+    cv::circle(roiMask_, center, radius, cv::Scalar::all(255), cv::FILLED, cv::LINE_8);
+
+    maskedGray_.create(rows, cols, CV_8UC1);
+    resizedGray_.create(inputH_, inputW_, CV_8UC1);
+    mask_.create(rows, cols, CV_8UC1);
+    return {};
+}
+
 Result<OctSegmentation> OctSegmentation::create(const std::string &onnxPath, OctSegmentationOptions options) {
-    if (options.expectedClasses <= 0) {
-        return Status{StatusCode::kInvalidArgument, "expectedClasses must be greater than zero"};
+    if (options.expectedClasses != 4) {
+        return Status{StatusCode::kInvalidArgument, "OCT segmentation expects exactly four output classes"};
     }
 
     TRTCPP_TRY(auto engine, EngineBuilder{}.buildAndLoad(onnxPath, options.buildOptions, options.engineOptions));
@@ -107,77 +117,97 @@ Result<OctSegmentation> OctSegmentation::create(const std::string &onnxPath, Oct
 
     const std::string inputName = inputNames.front();
     TRTCPP_TRY(auto inputShape, engine.tensorShape(inputName));
-    if (inputShape.rank() != 4 || inputShape[0] != 1 || inputShape[1] != 1 || inputShape[2] <= 0 || inputShape[3] <= 0) {
+    if (inputShape.isDynamic() || inputShape.rank() != 4 || inputShape[0] != 1 || inputShape[1] != 1 || inputShape[2] <= 0 ||
+        inputShape[3] <= 0) {
         return Status{StatusCode::kShapeMismatch, "OCT segmentation input must have shape [1,1,H,W]"};
     }
 
     TRTCPP_TRY(auto outputName, findOutputName(engine, options.expectedClasses));
+    TRTCPP_TRY(auto outputShape, engine.tensorShape(outputName));
+    if (outputShape.isDynamic() || outputShape.rank() != 4 || outputShape[0] != 1 || outputShape[1] != 4 || outputShape[2] <= 0 ||
+        outputShape[3] <= 0) {
+        return Status{StatusCode::kShapeMismatch, "OCT segmentation output must have shape [1,4,H,W]"};
+    }
 
-    return OctSegmentation{std::move(engine), inputName, outputName, static_cast<int>(inputShape[2]), static_cast<int>(inputShape[3]),
-                           options.expectedClasses};
+    OctSegmentation segmenter{
+        std::move(engine),
+        inputName,
+        outputName,
+        static_cast<int>(inputShape[2]),
+        static_cast<int>(inputShape[3]),
+        static_cast<int>(outputShape[2]),
+        static_cast<int>(outputShape[3]),
+        options.expectedClasses};
+    if (auto status = segmenter.initializeBuffers(); !status) {
+        return status;
+    }
+    return segmenter;
 }
 
 Result<cv::Mat> OctSegmentation::predict(const cv::Mat &gray) {
+    const auto totalStart = std::chrono::steady_clock::now();
+    timing_ = {};
+
     if (gray.empty()) {
         return Status{StatusCode::kInvalidArgument, "input cv::Mat is empty"};
     }
     if (gray.type() != CV_8UC1) {
         return Status{StatusCode::kInvalidArgument, "OCT segmentation input must be CV_8UC1"};
     }
-
-    const cv::Mat input = gray.isContinuous() ? gray : gray.clone();
-    std::vector<float> inputHost = preprocessOctMinusOneToOne(input, inputH_, inputW_);
-
-    TRTCPP_TRY(auto deviceInput, Tensor::allocate(DType::kFloat32, Shape{1, 1, inputH_, inputW_}, Device::kCuda));
-    TensorView hostInput{inputHost.data(), DType::kFloat32, Shape{1, 1, inputH_, inputW_}, Device::kHost};
-    if (auto status = deviceInput.copyFrom(hostInput, stream_); !status) {
+    if (auto status = preparePreprocessBuffers(gray.rows, gray.cols); !status) {
         return status;
     }
 
-    TRTCPP_TRY(auto outputs, engine_.infer({{inputName_, deviceInput.view()}}, stream_));
-    auto outIt = outputs.find(outputName_);
-    if (outIt == outputs.end()) {
-        return Status{StatusCode::kInternal, "OCT segmentation output tensor was not returned"};
+    const auto preprocessStart = std::chrono::steady_clock::now();
+    cv::bitwise_and(gray, roiMask_, maskedGray_);
+    cv::resize(maskedGray_, resizedGray_, resizedGray_.size(), 0.0, 0.0, cv::INTER_LINEAR);
+    resizedGray_.convertTo(floatInput_, CV_32F, 1.0 / 127.5, -1.0);
+    timing_.preprocessMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - preprocessStart).count();
+
+    const auto inferenceStart = std::chrono::steady_clock::now();
+    if (auto status = inputDevice_.copyFrom(inputHost_.view(), stream_); !status) {
+        return status;
     }
-
-    TRTCPP_TRY(auto hostOutput, outIt->second.toHost(stream_));
-    const Shape &outShape = hostOutput.shape();
-    if (hostOutput.dtype() != DType::kFloat32 || outShape.rank() != 4 || outShape[0] != 1 || outShape[1] != expectedClasses_ ||
-        outShape[2] <= 0 || outShape[3] <= 0) {
-        return Status{StatusCode::kShapeMismatch, "OCT segmentation output must be float32 with shape [1,4,H,W]"};
+    if (auto status = engine_.enqueue(inputs_, outputs_, stream_); !status) {
+        return status;
     }
+    if (auto status = outputHost_.copyFrom(outputDevice_.view(), stream_); !status) {
+        return status;
+    }
+    if (auto status = stream_.synchronize(); !status) {
+        return status;
+    }
+    timing_.inferenceMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - inferenceStart).count();
 
-    TRTCPP_TRY(auto logits, hostOutput.as<float>());
-    const int classes = static_cast<int>(outShape[1]);
-    const int outH = static_cast<int>(outShape[2]);
-    const int outW = static_cast<int>(outShape[3]);
-    const int plane = outH * outW;
-
-    std::vector<std::uint8_t> classMap(static_cast<std::size_t>(plane));
+    const auto postprocessStart = std::chrono::steady_clock::now();
+    TRTCPP_TRY(auto logits, outputHost_.as<float>());
+    const int plane = outputH_ * outputW_;
+    const float *logitData = logits.data();
     for (int p = 0; p < plane; ++p) {
+        const float value0 = logitData[p];
+        const float value1 = logitData[plane + p];
+        const float value2 = logitData[2 * plane + p];
+        const float value3 = logitData[3 * plane + p];
         int best = 0;
-        float bestVal = logits[static_cast<std::size_t>(p)];
-        for (int c = 1; c < classes; ++c) {
-            const float value = logits[static_cast<std::size_t>(c) * plane + p];
-            if (value > bestVal) {
-                bestVal = value;
-                best = c;
-            }
+        float bestValue = value0;
+        if (value1 > bestValue) {
+            bestValue = value1;
+            best = 1;
         }
-        classMap[static_cast<std::size_t>(p)] = static_cast<std::uint8_t>(best);
+        if (value2 > bestValue) {
+            bestValue = value2;
+            best = 2;
+        }
+        if (value3 > bestValue) {
+            best = 3;
+        }
+        classMap_.ptr<std::uint8_t>()[p] = static_cast<std::uint8_t>(best);
     }
 
-    cv::Mat mask(gray.rows, gray.cols, CV_8UC1);
-    for (int y = 0; y < mask.rows; ++y) {
-        const int sy = y * outH / mask.rows;
-        std::uint8_t *row = mask.ptr<std::uint8_t>(y);
-        for (int x = 0; x < mask.cols; ++x) {
-            const int sx = x * outW / mask.cols;
-            row[x] = classMap[static_cast<std::size_t>(sy) * outW + sx];
-        }
-    }
-
-    return mask;
+    cv::resize(classMap_, mask_, mask_.size(), 0.0, 0.0, cv::INTER_NEAREST);
+    timing_.postprocessMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - postprocessStart).count();
+    timing_.totalMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - totalStart).count();
+    return mask_;
 }
 
 } // namespace trtcpp::oct
