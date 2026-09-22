@@ -5,6 +5,8 @@ if(POLICY CMP0144)
     cmake_policy(SET CMP0144 NEW)
 endif()
 
+set(CMAKE_INSTALL_PREFIX "D:/Code/install/oct_segmentation" CACHE PATH "Install path prefix" FORCE)
+
 include("D:/Code/3rdparty/3rdparty.cmake")
 
 set(PROJECT_OUTPUT_DIR "${PROJECT_BINARY_DIR}/../output" CACHE PATH "Common output directory")
@@ -52,10 +54,11 @@ find_package(CUDAToolkit REQUIRED)
 find_package(TensorRT REQUIRED)
 
 # Windows executables do not search the TensorRT/CUDA installation directories
-# automatically. Keep the reference binaries runnable from the build output by
-# copying the runtime DLLs next to each executable.
-function(trtcpp_copy_windows_runtime_dlls target)
+# automatically. Keep the reference binaries runnable from the build output and
+# install tree by copying the runtime DLLs next to the executables.
+function(trtcpp_windows_runtime_dlls out_var)
     if(NOT WIN32)
+        set(${out_var} "" PARENT_SCOPE)
         return()
     endif()
 
@@ -85,7 +88,20 @@ function(trtcpp_copy_windows_runtime_dlls target)
             "${CUDAToolkit_BIN_DIR}/cusparse64_11.dll")
     endif()
 
-    set(_runtime_dlls ${_trt_runtime_dlls} ${_cudnn_runtime_dlls} ${_cuda_runtime_dlls})
+    set(_runtime_dlls
+        ${_trt_runtime_dlls}
+        ${_cudnn_runtime_dlls}
+        ${_cuda_runtime_dlls}
+    )
+    set(${out_var} "${_runtime_dlls}" PARENT_SCOPE)
+endfunction()
+
+function(trtcpp_copy_windows_runtime_dlls target)
+    if(NOT WIN32)
+        return()
+    endif()
+
+    trtcpp_windows_runtime_dlls(_runtime_dlls)
     foreach(_dll IN LISTS _runtime_dlls)
         if(EXISTS "${_dll}")
             add_custom_command(
@@ -94,6 +110,60 @@ function(trtcpp_copy_windows_runtime_dlls target)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_dll}" "$<TARGET_FILE_DIR:${target}>"
                 VERBATIM
             )
+        endif()
+    endforeach()
+
+    foreach(_opencv_lib IN LISTS OpenCV_LIBS)
+        if(TARGET "${_opencv_lib}")
+            get_target_property(_opencv_debug_dll "${_opencv_lib}" IMPORTED_LOCATION_DEBUG)
+            get_target_property(_opencv_release_dll "${_opencv_lib}" IMPORTED_LOCATION_RELEASE)
+
+            if(_opencv_debug_dll AND EXISTS "${_opencv_debug_dll}"
+               AND _opencv_release_dll AND EXISTS "${_opencv_release_dll}")
+                add_custom_command(
+                    TARGET ${target}
+                    POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            "$<$<CONFIG:Debug>:${_opencv_debug_dll}>$<$<NOT:$<CONFIG:Debug>>:${_opencv_release_dll}>"
+                            "$<TARGET_FILE_DIR:${target}>"
+                    VERBATIM
+                )
+            endif()
+        endif()
+    endforeach()
+endfunction()
+
+function(trtcpp_install_windows_runtime_dlls)
+    if(NOT WIN32)
+        return()
+    endif()
+
+    trtcpp_windows_runtime_dlls(_runtime_dlls)
+    foreach(_dll IN LISTS _runtime_dlls)
+        if(EXISTS "${_dll}")
+            install(FILES "${_dll}" DESTINATION "${CMAKE_INSTALL_BINDIR}")
+        endif()
+    endforeach()
+
+    foreach(_opencv_lib IN LISTS OpenCV_LIBS)
+        if(TARGET "${_opencv_lib}")
+            get_target_property(_opencv_debug_dll "${_opencv_lib}" IMPORTED_LOCATION_DEBUG)
+            get_target_property(_opencv_release_dll "${_opencv_lib}" IMPORTED_LOCATION_RELEASE)
+
+            if(_opencv_debug_dll AND EXISTS "${_opencv_debug_dll}")
+                install(
+                    FILES "${_opencv_debug_dll}"
+                    DESTINATION "${CMAKE_INSTALL_BINDIR}"
+                    CONFIGURATIONS Debug
+                )
+            endif()
+            if(_opencv_release_dll AND EXISTS "${_opencv_release_dll}")
+                install(
+                    FILES "${_opencv_release_dll}"
+                    DESTINATION "${CMAKE_INSTALL_BINDIR}"
+                    CONFIGURATIONS Release RelWithDebInfo MinSizeRel
+                )
+            endif()
         endif()
     endforeach()
 endfunction()
@@ -248,6 +318,8 @@ if(NOT SKBUILD)
         INCLUDES
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     )
+
+    trtcpp_install_windows_runtime_dlls()
 
     install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/generated/tensorrt_cpp_api/build_config.h
