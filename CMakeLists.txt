@@ -17,11 +17,11 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_OUTPUT_DIR}")
 # the preprocessing sublibrary.
 
 option(TRT_CPP_API_BUILD_TESTS "Build unit/integration tests" OFF)
-option(TRT_CPP_API_BUILD_EXAMPLES "Build reference examples" OFF)
+option(TRT_CPP_API_BUILD_EXAMPLES "Build reference examples" ON)
 option(TRT_CPP_API_BUILD_PREPROC "Build the fused preprocessing sublibrary" ON)
 option(TRT_CPP_API_BUILD_PYTHON "Build the pybind11 Python bindings" OFF)
-option(TRT_CPP_API_WITH_OPENCV "Build the optional OpenCV interop" OFF)
-option(TRT_CPP_API_WITH_SPDLOG "Build the optional spdlog logger adapter" OFF)
+option(TRT_CPP_API_WITH_OPENCV "Build the optional OpenCV interop" ON)
+option(TRT_CPP_API_WITH_SPDLOG "Build the optional spdlog logger adapter" ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 

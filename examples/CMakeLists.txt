@@ -33,6 +33,12 @@ if(TRT_CPP_API_WITH_OPENCV)
     target_link_libraries(oct_segmentation PRIVATE tensorrt_cpp_api::tensorrt_cpp_api ${OpenCV_LIBS})
     target_compile_features(oct_segmentation PRIVATE cxx_std_20)
     trtcpp_copy_windows_runtime_dlls(oct_segmentation)
+
+    find_package(OpenCV REQUIRED COMPONENTS highgui imgproc videoio)
+    add_executable(oct_video_segmentation oct_video_segmentation/main.cpp)
+    target_link_libraries(oct_video_segmentation PRIVATE tensorrt_cpp_api::tensorrt_cpp_api ${OpenCV_LIBS})
+    target_compile_features(oct_video_segmentation PRIVATE cxx_std_20)
+    trtcpp_copy_windows_runtime_dlls(oct_video_segmentation)
 endif()
 
 # Inference-throughput benchmark (no image I/O, so no stb): the C++ baseline for the Python
