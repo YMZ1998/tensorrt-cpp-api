@@ -97,10 +97,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    trtcpp::oct::OctSegmentationOptions options;
-    options.buildOptions.precision = trtcpp::Precision::kFp16;
-    options.buildOptions.engineCacheDir = root + "/models";
-    auto segmenter = trtcpp::oct::OctSegmentation::create(modelPath, std::move(options));
+    auto segmenter = trtcpp::oct::OctSegmentation::Init(modelPath, root + "/models");
     if (!segmenter) {
         std::fprintf(stderr, "oct segmentation create: %s\n", segmenter.status().message().c_str());
         return 1;
@@ -120,14 +117,7 @@ int main(int argc, char **argv) {
             break;
         }
 
-        cv::Mat gray;
-        if (frame.channels() == 1) {
-            gray = frame;
-        } else {
-            cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
-        }
-
-        auto maskResult = segmenter->predict(gray);
+        auto maskResult = segmenter->predictBgr(frame);
         if (!maskResult) {
             std::fprintf(stderr, "predict failed at frame %d: %s\n", processedFrames, maskResult.status().message().c_str());
             return 1;

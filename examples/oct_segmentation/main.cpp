@@ -56,11 +56,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    trtcpp::oct::OctSegmentationOptions options;
-    options.buildOptions.precision = trtcpp::Precision::kFp16;
-    options.buildOptions.engineCacheDir = root + "/models";
 
-    auto segmenter = trtcpp::oct::OctSegmentation::create(modelPath, std::move(options));
+    auto segmenter = trtcpp::oct::OctSegmentation::Init(modelPath, root + "/models");
     if (!segmenter) {
         std::fprintf(stderr, "oct segmentation create: %s\n", segmenter.status().message().c_str());
         return 1;
