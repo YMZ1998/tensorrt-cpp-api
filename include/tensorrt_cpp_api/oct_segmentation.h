@@ -38,8 +38,8 @@ public:
     OctSegmentation &operator=(const OctSegmentation &) = delete;
     ~OctSegmentation();
 
-    Result<cv::Mat> predict(const cv::Mat &gray);
-    Result<cv::Mat> predictBgr(const cv::Mat &bgr);
+    // Result<cv::Mat> predictBgr(const cv::Mat &bgr);
+    bool predict(const cv::Mat &gray, cv::Mat &mask);
 
     OctSegmentationTiming lastTiming() const noexcept;
     cv::Size inputSize() const noexcept;
@@ -49,6 +49,8 @@ public:
     int classes() const noexcept;
 
 private:
+    Result<cv::Mat> predict(const cv::Mat &gray);
+
     struct Impl;
 
     explicit OctSegmentation(std::unique_ptr<Impl> impl) noexcept;

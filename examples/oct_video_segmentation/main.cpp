@@ -108,6 +108,8 @@ int main(int argc, char **argv) {
     double inferenceTotalMs = 0.0;
     double postprocessTotalMs = 0.0;
     cv::Mat frame;
+    cv::Mat gray;
+    cv::Mat mask;
     int processedFrames = 0;
     while (capture.read(frame)) {
         if (maxFrames > 0 && processedFrames >= maxFrames) {
@@ -116,12 +118,13 @@ int main(int argc, char **argv) {
         if (frame.empty()) {
             break;
         }
-
-        auto maskResult = segmenter->predictBgr(frame);
-        if (!maskResult) {
-            std::fprintf(stderr, "predict failed at frame %d: %s\n", processedFrames, maskResult.status().message().c_str());
-            return 1;
-        }
+        cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+        //auto maskResult = segmenter->predict(gray);
+        //if (!maskResult) {
+        //    std::fprintf(stderr, "predict failed at frame %d: %s\n", processedFrames, maskResult.status().message().c_str());
+        //    return 1;
+        //}
+        segmenter->predict(gray, mask);
 
         const auto timing = segmenter->lastTiming();
         const double predictionMs = timing.totalMs;
@@ -129,7 +132,7 @@ int main(int argc, char **argv) {
         preprocessTotalMs += timing.preprocessMs;
         inferenceTotalMs += timing.inferenceMs;
         postprocessTotalMs += timing.postprocessMs;
-        cv::Mat overlay = makeOverlay(frame, maskResult.value());
+        cv::Mat overlay = makeOverlay(frame, mask);
 
         const double averageMs =
             std::accumulate(predictionTimes.begin(), predictionTimes.end(), 0.0) / static_cast<double>(predictionTimes.size());

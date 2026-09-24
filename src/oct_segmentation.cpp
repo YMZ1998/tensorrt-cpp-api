@@ -45,23 +45,10 @@ Result<std::string> findOutputName(Engine &engine, int expectedClasses) {
 } // namespace
 
 struct OctSegmentation::Impl {
-    Impl(
-        Engine engine,
-        std::string inputName,
-        std::string outputName,
-        int inputH,
-        int inputW,
-        int outputH,
-        int outputW,
-        int expectedClasses)
-        : engine(std::move(engine)),
-          inputName(std::move(inputName)),
-          outputName(std::move(outputName)),
-          inputH(inputH),
-          inputW(inputW),
-          outputH(outputH),
-          outputW(outputW),
-          expectedClasses(expectedClasses) {}
+    Impl(Engine engine, std::string inputName, std::string outputName, int inputH, int inputW, int outputH, int outputW,
+         int expectedClasses)
+        : engine(std::move(engine)), inputName(std::move(inputName)), outputName(std::move(outputName)), inputH(inputH), inputW(inputW),
+          outputH(outputH), outputW(outputW), expectedClasses(expectedClasses) {}
 
     Status initializeBuffers() {
         const Shape inputShape{1, 1, inputH, inputW};
@@ -250,15 +237,9 @@ Result<OctSegmentation> OctSegmentation::create(const std::string &onnxPath, Oct
         return Status{StatusCode::kShapeMismatch, "OCT segmentation output must have shape [1,4,H,W]"};
     }
 
-    std::unique_ptr<Impl> impl{new (std::nothrow) Impl{
-        std::move(engine),
-        inputName,
-        outputName,
-        static_cast<int>(inputShape[2]),
-        static_cast<int>(inputShape[3]),
-        static_cast<int>(outputShape[2]),
-        static_cast<int>(outputShape[3]),
-        options.expectedClasses}};
+    std::unique_ptr<Impl> impl{new (std::nothrow) Impl{std::move(engine), inputName, outputName, static_cast<int>(inputShape[2]),
+                                                       static_cast<int>(inputShape[3]), static_cast<int>(outputShape[2]),
+                                                       static_cast<int>(outputShape[3]), options.expectedClasses}};
     if (!impl) {
         return Status{StatusCode::kInternal, "failed to allocate OCT segmentation state"};
     }
@@ -268,37 +249,31 @@ Result<OctSegmentation> OctSegmentation::create(const std::string &onnxPath, Oct
     return OctSegmentation{std::move(impl)};
 }
 
-Result<cv::Mat> OctSegmentation::predict(const cv::Mat &gray) {
-    return impl_->predictGray(gray);
+Result<cv::Mat> OctSegmentation::predict(const cv::Mat &gray) { return impl_->predictGray(gray); }
+
+//Result<cv::Mat> OctSegmentation::predictBgr(const cv::Mat &bgr) { return impl_->predictBgr(bgr); }
+
+bool OctSegmentation::predict(const cv::Mat &gray, cv::Mat &mask) {
+    auto maskResult = impl_->predictGray(gray);
+    if (!maskResult) {
+        std::fprintf(stderr, "oct segmentation predict  %s\n", maskResult.status().message().c_str());
+        return false;
+    }
+    mask = maskResult.value();
+    return true;
 }
 
-Result<cv::Mat> OctSegmentation::predictBgr(const cv::Mat &bgr) {
-    return impl_->predictBgr(bgr);
-}
+OctSegmentationTiming OctSegmentation::lastTiming() const noexcept { return impl_ ? impl_->timing : OctSegmentationTiming{}; }
 
-OctSegmentationTiming OctSegmentation::lastTiming() const noexcept {
-    return impl_ ? impl_->timing : OctSegmentationTiming{};
-}
+cv::Size OctSegmentation::inputSize() const noexcept { return impl_ ? cv::Size(impl_->inputW, impl_->inputH) : cv::Size{}; }
 
-cv::Size OctSegmentation::inputSize() const noexcept {
-    return impl_ ? cv::Size(impl_->inputW, impl_->inputH) : cv::Size{};
-}
+cv::Size OctSegmentation::outputSize() const noexcept { return impl_ ? cv::Size(impl_->outputW, impl_->outputH) : cv::Size{}; }
 
-cv::Size OctSegmentation::outputSize() const noexcept {
-    return impl_ ? cv::Size(impl_->outputW, impl_->outputH) : cv::Size{};
-}
+int OctSegmentation::inputHeight() const noexcept { return impl_ ? impl_->inputH : 0; }
 
-int OctSegmentation::inputHeight() const noexcept {
-    return impl_ ? impl_->inputH : 0;
-}
+int OctSegmentation::inputWidth() const noexcept { return impl_ ? impl_->inputW : 0; }
 
-int OctSegmentation::inputWidth() const noexcept {
-    return impl_ ? impl_->inputW : 0;
-}
-
-int OctSegmentation::classes() const noexcept {
-    return impl_ ? impl_->expectedClasses : 0;
-}
+int OctSegmentation::classes() const noexcept { return impl_ ? impl_->expectedClasses : 0; }
 
 } // namespace trtcpp::oct
 
