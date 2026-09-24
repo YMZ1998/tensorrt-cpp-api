@@ -1,282 +1,259 @@
-// Semantic segmentation with an OCT-style single-channel TensorRT model.
-//
-// Pipeline: decode (stb RGB) -> grayscale + circular ROI -> resize -> normalize to [-1, 1] ->
-// NCHW [1,1,H,W] -> infer -> per-pixel prediction over [1,C,H,W] -> single-channel mask -> write.
-
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstdint>
 #include <cstdio>
 #include <string>
-#include <utility>
 #include <vector>
 
-#include "../common/image_io.h"
+#include <opencv2/opencv.hpp>
+
+#include "tensorrt_cpp_api/build_options.h"
+#include "tensorrt_cpp_api/engine.h"
+#include "tensorrt_cpp_api/engine_builder.h"
+#include "tensorrt_cpp_api/tensor.h"
 
 using namespace trtcpp;
 
-namespace {
+class OctSegmentor {
+public:
+    bool load(const std::string &modelPath, const std::string &cacheDir) {
+        BuildOptions options;
+        options.precision = Precision::kFp16;
+        options.engineCacheDir = cacheDir;
 
-float maskedGrayAt(const examples::Image &img, int x, int y) {
-    x = std::clamp(x, 0, img.width - 1);
-    y = std::clamp(y, 0, img.height - 1);
+        auto result = EngineBuilder{}.buildAndLoad(modelPath, options);
 
-    const float cx = (static_cast<float>(img.width) - 1.0f) * 0.5f;
-    const float cy = (static_cast<float>(img.height) - 1.0f) * 0.5f;
-    const float radius = static_cast<float>(std::min(img.width, img.height)) * 0.5f;
-    const float dx = static_cast<float>(x) - cx;
-    const float dy = static_cast<float>(y) - cy;
-    if (dx * dx + dy * dy > radius * radius) {
-        return 0.0f;
-    }
-
-    const auto *px = &img.data[(static_cast<std::size_t>(y) * img.width + x) * 3];
-    return 0.299f * static_cast<float>(px[0]) + 0.587f * static_cast<float>(px[1]) + 0.114f * static_cast<float>(px[2]);
-}
-
-std::vector<float> preprocessOctMinusOneToOne(const examples::Image &img, int outH, int outW) {
-    std::vector<float> chw(static_cast<std::size_t>(outH) * outW);
-    const float scaleY = static_cast<float>(img.height) / static_cast<float>(outH);
-    const float scaleX = static_cast<float>(img.width) / static_cast<float>(outW);
-
-    for (int y = 0; y < outH; ++y) {
-        const float sy = (static_cast<float>(y) + 0.5f) * scaleY - 0.5f;
-        const int y0 = static_cast<int>(std::floor(sy));
-        const int y1 = y0 + 1;
-        const float wy = sy - static_cast<float>(y0);
-        for (int x = 0; x < outW; ++x) {
-            const float sx = (static_cast<float>(x) + 0.5f) * scaleX - 0.5f;
-            const int x0 = static_cast<int>(std::floor(sx));
-            const int x1 = x0 + 1;
-            const float wx = sx - static_cast<float>(x0);
-
-            const float v00 = maskedGrayAt(img, x0, y0);
-            const float v01 = maskedGrayAt(img, x1, y0);
-            const float v10 = maskedGrayAt(img, x0, y1);
-            const float v11 = maskedGrayAt(img, x1, y1);
-            const float top = v00 + (v01 - v00) * wx;
-            const float bottom = v10 + (v11 - v10) * wx;
-            const float pixel = top + (bottom - top) * wy;
-
-            chw[static_cast<std::size_t>(y) * outW + x] = pixel / 127.5f - 1.0f;
+        if (!result) {
+            std::fprintf(stderr, "engine: %s\n", result.status().message().c_str());
+            return false;
         }
-    }
 
-    return chw;
-}
+        engine_ = std::make_unique<Engine>(std::move(result.value()));
 
-} // namespace
+        const auto inputs = engine_->inputNames();
+        const auto outputs = engine_->outputNames();
 
-int main(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
-
-    const std::string root = "D:/Code/tensorrt-cpp-api";
-
-    const std::string modelPath = root + "/models/efficientnet_b1_best_model.onnx";
-    const std::string imagePath = root + "/inputs/input.png";
-    const std::string outPath = root + "/inputs/segmentation.jpg";
-
-    BuildOptions bo;
-    bo.precision = Precision::kFp16;
-    bo.engineCacheDir = root + "/models";
-    auto engine = EngineBuilder{}.buildAndLoad(modelPath, bo);
-    if (!engine) {
-        std::fprintf(stderr, "engine: %s\n", engine.status().message().c_str());
-        return 1;
-    }
-    const auto inputNames = engine->inputNames();
-    const auto outputNames = engine->outputNames();
-    if (inputNames.size() != 1) {
-        std::fprintf(stderr, "segmentation expects exactly one input\n");
-        return 1;
-    }
-    if (outputNames.empty()) {
-        std::fprintf(stderr, "segmentation expects at least one output\n");
-        return 1;
-    }
-
-    const std::string inName = inputNames.front();
-    std::string outName;
-    std::string fallbackOutName;
-    for (const std::string &name : outputNames) {
-        auto shapeResult = engine->tensorShape(name);
-        auto dtypeResult = engine->tensorDType(name);
-        if (!shapeResult || !dtypeResult) {
-            continue;
+        if (inputs.size() != 1 || outputs.empty()) {
+            std::fprintf(stderr, "invalid model IO\n");
+            return false;
         }
-        const Shape shape = shapeResult.value();
-        const bool isSegmentationLogits =
-            *dtypeResult == DType::kFloat32 && shape.rank() == 4 && shape[0] == 1 && shape[1] > 0 && shape[2] > 0 && shape[3] > 0;
-        if (!isSegmentationLogits) {
-            continue;
+
+        inputName_ = inputs[0];
+        outputName_ = outputs[0];
+
+        auto shape = engine_->tensorShape(inputName_);
+        if (!shape || shape->rank() != 4 || (*shape)[0] != 1 || (*shape)[1] != 1) {
+            std::fprintf(stderr, "input must be [1,1,H,W]\n");
+            return false;
         }
-        if (shape[1] == 1) {
-            outName = name;
-            break;
-        }
-        if (fallbackOutName.empty()) {
-            fallbackOutName = name;
-        }
-        if (name == "out" || name.find("out") != std::string::npos) {
-            outName = name;
-            break;
-        }
+
+        inputH_ = static_cast<int>((*shape)[2]);
+        inputW_ = static_cast<int>((*shape)[3]);
+
+        return true;
     }
-    if (outName.empty()) {
-        outName = fallbackOutName;
+
+    bool infer(const cv::Mat &image, cv::Mat &mask, double *elapsedMs = nullptr) {
+        if (image.empty() || image.type() != CV_8UC1)
+            return false;
+
+        auto input = preprocess(image);
+
+        auto tensorResult = Tensor::allocate(DType::kFloat32, Shape{1, 1, inputH_, inputW_}, Device::kCuda);
+
+        if (!tensorResult) {
+            std::fprintf(stderr, "allocate input: %s\n", tensorResult.status().message().c_str());
+            return false;
+        }
+
+        auto tensor = std::move(tensorResult.value());
+
+        TensorView host{input.data(), DType::kFloat32, Shape{1, 1, inputH_, inputW_}, Device::kHost};
+
+        if (auto s = tensor.copyFrom(host, stream_); !s) {
+            std::fprintf(stderr, "upload: %s\n", s.message().c_str());
+            return false;
+        }
+
+        const auto start = std::chrono::steady_clock::now();
+
+        auto outputs = engine_->infer({{inputName_, tensor.view()}}, stream_);
+
+        if (!outputs) {
+            std::fprintf(stderr, "infer: %s\n", outputs.status().message().c_str());
+            return false;
+        }
+
+        if (auto s = stream_.synchronize(); !s) {
+            std::fprintf(stderr, "sync: %s\n", s.message().c_str());
+            return false;
+        }
+
+        if (elapsedMs) {
+            *elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        }
+
+        auto it = outputs->find(outputName_);
+        if (it == outputs->end())
+            return false;
+
+        auto hostResult = it->second.toHost(stream_);
+        if (!hostResult) {
+            std::fprintf(stderr, "download: %s\n", hostResult.status().message().c_str());
+            return false;
+        }
+
+        auto hostTensor = std::move(hostResult.value());
+
+        if (hostTensor.shape().rank() != 4 || hostTensor.shape()[0] != 1 || hostTensor.dtype() != DType::kFloat32) {
+            std::fprintf(stderr, "invalid output: %s\n", hostTensor.shape().toString().c_str());
+            return false;
+        }
+
+        const int C = static_cast<int>(hostTensor.shape()[1]);
+        const int H = static_cast<int>(hostTensor.shape()[2]);
+        const int W = static_cast<int>(hostTensor.shape()[3]);
+
+        auto logits = hostTensor.as<float>().value();
+
+        mask = postprocess(logits, C, H, W);
+        cv::resize(mask, mask, image.size(), 0, 0, cv::INTER_NEAREST);
+
+        return true;
     }
-    if (outName.empty()) {
-        std::fprintf(stderr, "could not find a float32 segmentation output [1,C,H,W]\n");
-        for (const std::string &name : outputNames) {
-            auto shapeResult = engine->tensorShape(name);
-            auto dtypeResult = engine->tensorDType(name);
-            if (shapeResult && dtypeResult) {
-                std::fprintf(stderr, "  output: %s \n", name.c_str());
+
+    int inputWidth() const { return inputW_; }
+
+    int inputHeight() const { return inputH_; }
+
+private:
+    std::vector<float> preprocess(const cv::Mat &image) const {
+        std::vector<float> dst(static_cast<size_t>(inputH_) * inputW_);
+        const float sx = static_cast<float>(image.cols) / inputW_;
+        const float sy = static_cast<float>(image.rows) / inputH_;
+        const float cx = (image.cols - 1) * 0.5f;
+        const float cy = (image.rows - 1) * 0.5f;
+        const float r = std::min(image.cols, image.rows) * 0.5f;
+        const float r2 = r * r;
+        auto pixel = [&](int x, int y) {
+            x = std::clamp(x, 0, image.cols - 1);
+            y = std::clamp(y, 0, image.rows - 1);
+
+            const float dx = x - cx;
+            const float dy = y - cy;
+
+            if (dx * dx + dy * dy > r2)
+                return 0.0f;
+
+            return static_cast<float>(image.at<uint8_t>(y, x));
+        };
+
+        for (int y = 0; y < inputH_; ++y) {
+            const float fy = (y + 0.5f) * sy - 0.5f;
+
+            const int y0 = static_cast<int>(std::floor(fy));
+            const int y1 = y0 + 1;
+            const float wy = fy - y0;
+
+            for (int x = 0; x < inputW_; ++x) {
+                const float fx = (x + 0.5f) * sx - 0.5f;
+
+                const int x0 = static_cast<int>(std::floor(fx));
+                const int x1 = x0 + 1;
+                const float wx = fx - x0;
+
+                const float a = pixel(x0, y0);
+                const float b = pixel(x1, y0);
+                const float c = pixel(x0, y1);
+                const float d = pixel(x1, y1);
+
+                const float top = a + (b - a) * wx;
+
+                const float bottom = c + (d - c) * wx;
+
+                dst[static_cast<size_t>(y) * inputW_ + x] = (top + (bottom - top) * wy) / 127.5f - 1.0f;
             }
         }
-        return 1;
+
+        return dst;
     }
 
-    auto inShapeResult = engine->tensorShape(inName);
-    if (!inShapeResult || inShapeResult->rank() != 4 || (*inShapeResult)[0] != 1 || (*inShapeResult)[1] != 1 || (*inShapeResult)[2] <= 0 ||
-        (*inShapeResult)[3] <= 0) {
-        std::fprintf(stderr, "segmentation expects input shape [1,1,H,W]\n");
-        return 1;
-    }
-    const auto inShape = inShapeResult.value(); // [1,1,H,W]
-    const int inH = static_cast<int>(inShape[2]);
-    const int inW = static_cast<int>(inShape[3]);
+    cv::Mat postprocess(std::span<const float> logits, int C, int H, int W) const {
+        cv::Mat mask(H, W, CV_8UC1);
 
-    examples::Image img = examples::decodeImage(imagePath);
-    if (img.empty()) {
-        std::fprintf(stderr, "could not read image: %s\n", imagePath.c_str());
-        return 1;
-    }
+        const int plane = H * W;
 
-    Stream stream;
-    auto inputHost = preprocessOctMinusOneToOne(img, inH, inW);
-    auto dstResult = Tensor::allocate(DType::kFloat32, Shape{1, 1, inH, inW}, Device::kCuda);
-    if (!dstResult) {
-        std::fprintf(stderr, "allocate input: %s\n", dstResult.status().message().c_str());
-        return 1;
-    }
-    auto dst = std::move(dstResult.value());
-    TensorView hostInput{inputHost.data(), DType::kFloat32, Shape{1, 1, inH, inW}, Device::kHost};
-    if (auto s = dst.copyFrom(hostInput, stream); !s) {
-        std::fprintf(stderr, "upload input: %s\n", s.message().c_str());
-        return 1;
-    }
-
-    auto runOnce = [&]() -> Result<double> {
-        const auto start = std::chrono::steady_clock::now();
-        auto outputs = engine->infer({{inName, dst.view()}}, stream);
-        if (!outputs) {
-            return outputs.status();
-        }
-        if (auto s = stream.synchronize(); !s) {
-            return s;
-        }
-        const auto end = std::chrono::steady_clock::now();
-        return std::chrono::duration<double, std::milli>(end - start).count();
-    };
-
-    for (int i = 0; i < 5; ++i) {
-        auto elapsed = runOnce();
-        if (!elapsed) {
-            std::fprintf(stderr, "warmup infer: %s\n", elapsed.status().message().c_str());
-            return 1;
-        }
-    }
-
-    const auto inferStart = std::chrono::steady_clock::now();
-    auto outputs = engine->infer({{inName, dst.view()}}, stream);
-    if (!outputs) {
-        std::fprintf(stderr, "infer: %s\n", outputs.status().message().c_str());
-        return 1;
-    }
-    if (auto s = stream.synchronize(); !s) {
-        std::fprintf(stderr, "infer synchronize: %s\n", s.message().c_str());
-        return 1;
-    }
-    const auto inferEnd = std::chrono::steady_clock::now();
-    const double inferMs = std::chrono::duration<double, std::milli>(inferEnd - inferStart).count();
-    auto outIt = outputs->find(outName);
-    if (outIt == outputs->end()) {
-        std::fprintf(stderr, "infer did not return selected output: %s\n", outName.c_str());
-        return 1;
-    }
-    auto hostResult = outIt->second.toHost(stream);
-    if (!hostResult) {
-        std::fprintf(stderr, "copy output to host: %s\n", hostResult.status().message().c_str());
-        return 1;
-    }
-    auto host = std::move(hostResult.value());
-    if (host.shape().rank() != 4 || host.shape()[0] != 1 || host.shape()[1] <= 0 || host.shape()[2] <= 0 || host.shape()[3] <= 0 ||
-        host.dtype() != DType::kFloat32) {
-        std::fprintf(stderr, "segmentation output %s must be float32 with shape [1,C,H,W], got shape %s\n", outName.c_str(),
-                     host.shape().toString().c_str());
-        return 1;
-    }
-    auto logits = host.as<float>().value(); // [1,C,H,W], channels-first
-    const int C = static_cast<int>(host.shape()[1]);
-    const int H = static_cast<int>(host.shape()[2]);
-    const int W = static_cast<int>(host.shape()[3]);
-    const int plane = H * W;
-
-    std::vector<std::uint8_t> classMap(static_cast<std::size_t>(plane));
-    const int reportedClasses = C == 1 ? 2 : C;
-    std::vector<int> hist(static_cast<std::size_t>(reportedClasses), 0);
-    if (C == 1) {
         for (int p = 0; p < plane; ++p) {
-            const int cls = logits[static_cast<std::size_t>(p)] > 0.5f ? 1 : 0;
-            classMap[static_cast<std::size_t>(p)] = static_cast<std::uint8_t>(cls);
-            ++hist[static_cast<std::size_t>(cls)];
-        }
-    } else {
-        for (int p = 0; p < plane; ++p) {
-            int best = 0;
-            float bestVal = logits[p];
+            int cls = 0;
+            float best = logits[p];
+
             for (int c = 1; c < C; ++c) {
-                const float v = logits[static_cast<std::size_t>(c) * plane + p];
-                if (v > bestVal) {
-                    bestVal = v;
-                    best = c;
+                const float value = logits[static_cast<size_t>(c) * plane + p];
+
+                if (value > best) {
+                    best = value;
+                    cls = c;
                 }
             }
-            classMap[static_cast<std::size_t>(p)] = static_cast<std::uint8_t>(best);
-            ++hist[static_cast<std::size_t>(best)];
+
+            mask.data[p] = C == 1 ? (best > 0.5f ? 255 : 0) : static_cast<uint8_t>(cls * 255 / (C - 1));
         }
+
+        return mask;
     }
 
-    examples::Image prediction;
-    prediction.width = img.width;
-    prediction.height = img.height;
-    prediction.channels = 3;
-    prediction.data.resize(static_cast<std::size_t>(img.width) * img.height * 3);
-    for (int y = 0; y < img.height; ++y) {
-        const int sy = y * H / img.height;
-        for (int x = 0; x < img.width; ++x) {
-            const int sx = x * W / img.width;
-            const std::uint8_t cls = classMap[static_cast<std::size_t>(sy) * W + sx];
-            const std::uint8_t value = C == 1 ? static_cast<std::uint8_t>(cls * 255) : static_cast<std::uint8_t>(cls * 255 / (C - 1));
-            auto *px = &prediction.data[(static_cast<std::size_t>(y) * img.width + x) * 3];
-            px[0] = value;
-            px[1] = value;
-            px[2] = value;
-        }
-    }
-    examples::writeJpg(outPath, prediction);
+private:
+    std::unique_ptr<Engine> engine_;
+    Stream stream_;
 
-    std::printf("preprocessed image as [1,1,%d,%d] with normalized = pixel / 127.5 - 1.0\n", inH, inW);
-    std::printf("prediction time: %.3f ms\n", inferMs);
-    std::printf("segmented %dx%d image into single-channel prediction; present classes:\n", img.width, img.height);
-    for (int c = 0; c < reportedClasses; ++c) {
-        if (hist[static_cast<std::size_t>(c)] > 0) {
-            std::printf("  class %2d : %5.1f%% of pixels\n", c, 100.0 * hist[static_cast<std::size_t>(c)] / plane);
-        }
+    std::string inputName_;
+    std::string outputName_;
+
+    int inputH_ = 0;
+    int inputW_ = 0;
+};
+
+int main() {
+    const std::string root = "D:/Code/tensorrt-cpp-api";
+
+    OctSegmentor segmentor;
+
+    if (!segmentor.load(root + "/models/efficientnet_b1_best_model.onnx", root + "/models")) {
+        return 1;
     }
-    std::printf("wrote %s\n", outPath.c_str());
+
+    cv::Mat image = cv::imread(root + "/inputs/input.png", cv::IMREAD_GRAYSCALE);
+
+    if (image.empty()) {
+        std::fprintf(stderr, "failed to read image\n");
+        return 1;
+    }
+
+    // Warmup
+    cv::Mat mask;
+    for (int i = 0; i < 5; ++i) {
+        if (!segmentor.infer(image, mask))
+            return 1;
+    }
+
+    // Benchmark
+    double ms = 0.0;
+
+    if (!segmentor.infer(image, mask, &ms))
+        return 1;
+
+    const std::string output = root + "/inputs/segmentation.png";
+
+    if (!cv::imwrite(output, mask)) {
+        std::fprintf(stderr, "failed to save mask\n");
+        return 1;
+    }
+
+    std::printf("input : %dx%d\n"
+                "model : %dx%d\n"
+                "infer : %.3f ms\n"
+                "saved : %s\n",
+                image.cols, image.rows, segmentor.inputWidth(), segmentor.inputHeight(), ms, output.c_str());
+
     return 0;
 }
