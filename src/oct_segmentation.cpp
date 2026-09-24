@@ -10,6 +10,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <filesystem>
 
 #include <opencv2/imgproc.hpp>
 
@@ -204,10 +205,12 @@ OctSegmentation::OctSegmentation(OctSegmentation &&) noexcept = default;
 OctSegmentation &OctSegmentation::operator=(OctSegmentation &&) noexcept = default;
 OctSegmentation::~OctSegmentation() = default;
 
-Result<OctSegmentation> OctSegmentation::Init(const std::string &onnxPath, const std::string &engineCacheDir) {
+Result<OctSegmentation> OctSegmentation::Init(const std::string &onnxPath) {
+
+    std::filesystem::path engineCacheDir = std::filesystem::path(onnxPath).parent_path();
     OctSegmentationOptions options;
     options.buildOptions.precision = Precision::kFp16;
-    options.buildOptions.engineCacheDir = engineCacheDir;
+    options.buildOptions.engineCacheDir = engineCacheDir.string();
     return create(onnxPath, std::move(options));
 }
 

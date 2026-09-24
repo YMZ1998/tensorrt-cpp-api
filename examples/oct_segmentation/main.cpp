@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <iostream>
 #include <string>
 #include <utility>
 
@@ -11,6 +13,14 @@
 #include <opencv2/imgcodecs.hpp>
 
 #include <tensorrt_cpp_api/oct_segmentation.h>
+#include <windows.h>
+
+std::filesystem::path getExeDir() {
+    wchar_t buffer[MAX_PATH];
+    GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+
+    return std::filesystem::path(buffer).parent_path();
+}
 
 namespace {
 
@@ -44,10 +54,15 @@ bool validateMask(const cv::Mat &mask, const cv::Size &expectedSize, int classes
 } // namespace
 
 int main(int argc, char **argv) {
+    std::cout << std::filesystem::current_path() << '\n';
+    std::cout << getExeDir() << '\n';
+    auto exeDir = getExeDir();
+
+    //auto modelPath = exeDir / "models" / "efficientnet_b1_best_model.onnx";
     const std::string root = "D:/Code/tensorrt-cpp-api";
-    const std::string modelPath = argc > 1 ? argv[1] : root + "/models/efficientnet_b1_best_model.onnx";
-    const std::string imagePath = argc > 2 ? argv[2] : root + "/inputs/input.png";
-    const std::string outPath = argc > 3 ? argv[3] : root + "/inputs/oct_segmentation_mask.png";
+    const std::string modelPath = argc > 1 ? argv[1] : exeDir.string() +"/models/efficientnet_b1_best_model.onnx";
+    const std::string imagePath = argc > 2 ? argv[2] : exeDir.string() + "/input.png";
+    const std::string outPath = argc > 3 ? argv[3] : exeDir.string() + +"/oct_segmentation_mask.png";
     const int iterations = 10;
 
     cv::Mat gray = cv::imread(imagePath, cv::IMREAD_GRAYSCALE);
@@ -56,7 +71,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    auto segmenter = trtcpp::oct::OctSegmentation::Init(modelPath, root + "/models");
+    auto segmenter = trtcpp::oct::OctSegmentation::Init(modelPath);
     if (!segmenter) {
         std::fprintf(stderr, "oct segmentation create: %s\n", segmenter.status().message().c_str());
         return 1;
@@ -64,11 +79,6 @@ int main(int argc, char **argv) {
     cv::Mat mask;
 
     // The first call initializes image-size-dependent OpenCV buffers and warms TensorRT.
-    // auto warmupResult = segmenter->predict(gray);
-    // if (!warmupResult) {
-    //    std::fprintf(stderr, "oct segmentation warmup: %s\n", warmupResult.status().message().c_str());
-    //    return 1;
-    //}
     segmenter->predict(gray, mask);
     const auto warmupTiming = segmenter->lastTiming();
 
@@ -78,13 +88,6 @@ int main(int argc, char **argv) {
     double totalMs = 0.0;
 
     for (int i = 0; i < iterations; ++i) {
-        // auto maskResult = segmenter->predict(gray);
-        // if (!maskResult) {
-        //    std::fprintf(stderr, "oct segmentation predict %d: %s\n", i, maskResult.status().message().c_str());
-        //    return 1;
-        //}
-        // mask = maskResult.value();
-
         segmenter->predict(gray, mask);
 
         // This is a shallow view of the segmenter's reusable output buffer. Consume it

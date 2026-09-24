@@ -343,3 +343,14 @@ endif() # NOT SKBUILD
 if(TRT_CPP_API_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
+
+
+file(COPY "inputs/input.png" DESTINATION "${PROJECT_OUTPUT_DIR}/debug")
+file(COPY "inputs/input.png" DESTINATION "${PROJECT_OUTPUT_DIR}/release")
+#file(COPY "models/efficientnet_b1_best_model.onnx" DESTINATION "${PROJECT_OUTPUT_DIR}/debug/models")
+#file(COPY "models/efficientnet_b1_best_model.onnx" DESTINATION "${PROJECT_OUTPUT_DIR}/release/models")
+set(MODEL "models/efficientnet_b1_best_model.onnx")
+
+foreach(CONFIG debug release)
+    file(COPY "${MODEL}" DESTINATION "${PROJECT_OUTPUT_DIR}/${CONFIG}/models")
+endforeach()

@@ -97,7 +97,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    auto segmenter = trtcpp::oct::OctSegmentation::Init(modelPath, root + "/models");
+    auto segmenter = trtcpp::oct::OctSegmentation::Init(modelPath);
     if (!segmenter) {
         std::fprintf(stderr, "oct segmentation create: %s\n", segmenter.status().message().c_str());
         return 1;
