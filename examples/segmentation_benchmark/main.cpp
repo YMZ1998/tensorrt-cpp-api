@@ -3,22 +3,31 @@
 // Usage:
 //   segmentation_benchmark [iterations] [warmup] [model.onnx|engine] [image]
 
+#include "../common/image_io.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <numeric>
 #include <string>
 #include <utility>
 #include <vector>
-
-#include "../common/image_io.h"
+#define NOMINMAX
+#include <windows.h>
 
 using namespace trtcpp;
 
 namespace {
+
+std::filesystem::path getExeDir() {
+    wchar_t buffer[MAX_PATH];
+    GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+
+    return std::filesystem::path(buffer).parent_path();
+}
 
 float maskedGrayAt(const examples::Image &img, int x, int y) {
     x = std::clamp(x, 0, img.width - 1);
@@ -94,11 +103,12 @@ int parsePositive(const char *text, int fallback) {
 } // namespace
 
 int main(int argc, char **argv) {
+    auto exeDir = getExeDir();
     const std::string root = "D:/Code/tensorrt-cpp-api";
     const int iterations = argc > 1 ? parsePositive(argv[1], 30) : 30;
     const int warmup = argc > 2 ? std::max(0, std::atoi(argv[2])) : 5;
-    const std::string modelPath = argc > 3 ? argv[3] : root + "/models/efficientnet_b1_best_model.onnx";
-    const std::string imagePath = argc > 4 ? argv[4] : root + "/inputs/input.png";
+    const std::string modelPath = argc > 3 ? argv[3] : exeDir.string() + "/models/efficientnet_b1_best_model.onnx";
+    const std::string imagePath = argc > 4 ? argv[4] : exeDir.string() + "/input.png";
 
     BuildOptions bo;
     bo.precision = Precision::kFp16;
@@ -117,8 +127,8 @@ int main(int argc, char **argv) {
 
     const std::string inName = inputNames.front();
     auto inShapeResult = engine->tensorShape(inName);
-    if (!inShapeResult || inShapeResult->rank() != 4 || (*inShapeResult)[0] != 1 || (*inShapeResult)[1] != 1 ||
-        (*inShapeResult)[2] <= 0 || (*inShapeResult)[3] <= 0) {
+    if (!inShapeResult || inShapeResult->rank() != 4 || (*inShapeResult)[0] != 1 || (*inShapeResult)[1] != 1 || (*inShapeResult)[2] <= 0 ||
+        (*inShapeResult)[3] <= 0) {
         std::fprintf(stderr, "segmentation benchmark expects input shape [1,1,H,W]\n");
         return 1;
     }

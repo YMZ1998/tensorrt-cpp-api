@@ -199,19 +199,30 @@ struct OctSegmentation::Impl {
     OctSegmentationTiming timing;
 };
 
+OctSegmentation::OctSegmentation() = default;
 OctSegmentation::OctSegmentation(std::unique_ptr<Impl> impl) noexcept : impl_(std::move(impl)) {}
 
 OctSegmentation::OctSegmentation(OctSegmentation &&) noexcept = default;
 OctSegmentation &OctSegmentation::operator=(OctSegmentation &&) noexcept = default;
 OctSegmentation::~OctSegmentation() = default;
 
-Result<OctSegmentation> OctSegmentation::Init(const std::string &onnxPath) {
-
-    std::filesystem::path engineCacheDir = std::filesystem::path(onnxPath).parent_path();
-    OctSegmentationOptions options;
-    options.buildOptions.precision = Precision::kFp16;
-    options.buildOptions.engineCacheDir = engineCacheDir.string();
-    return create(onnxPath, std::move(options));
+bool OctSegmentation::Init(const std::string &onnxPath) {
+    try {
+        std::filesystem::path engineCacheDir = std::filesystem::path(onnxPath).parent_path();
+        OctSegmentationOptions options;
+        options.buildOptions.precision = Precision::kFp16;
+        options.buildOptions.engineCacheDir = engineCacheDir.string();
+        auto result = create(onnxPath, std::move(options));
+        if (!result) {
+            impl_.reset();
+            return false;
+        }
+        *this = std::move(result.value());
+        return true;
+    } catch (...) {
+        impl_.reset();
+        return false;
+    }
 }
 
 Result<OctSegmentation> OctSegmentation::create(const std::string &onnxPath, OctSegmentationOptions options) {

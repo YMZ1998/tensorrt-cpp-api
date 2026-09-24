@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <windows.h>
 #include <iostream>
 #include <string>
 #include <utility>
@@ -13,7 +14,6 @@
 #include <opencv2/imgcodecs.hpp>
 
 #include <tensorrt_cpp_api/oct_segmentation.h>
-#include <windows.h>
 
 std::filesystem::path getExeDir() {
     wchar_t buffer[MAX_PATH];
@@ -62,7 +62,7 @@ int main(int argc, char **argv) {
     const std::string root = "D:/Code/tensorrt-cpp-api";
     const std::string modelPath = argc > 1 ? argv[1] : exeDir.string() +"/models/efficientnet_b1_best_model.onnx";
     const std::string imagePath = argc > 2 ? argv[2] : exeDir.string() + "/input.png";
-    const std::string outPath = argc > 3 ? argv[3] : exeDir.string() + +"/oct_segmentation_mask.png";
+    const std::string outPath = argc > 3 ? argv[3] : exeDir.string() +"/oct_segmentation_mask.png";
     const int iterations = 10;
 
     cv::Mat gray = cv::imread(imagePath, cv::IMREAD_GRAYSCALE);
@@ -71,16 +71,16 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    auto segmenter = trtcpp::oct::OctSegmentation::Init(modelPath);
-    if (!segmenter) {
-        std::fprintf(stderr, "oct segmentation create: %s\n", segmenter.status().message().c_str());
+    trtcpp::oct::OctSegmentation segmenter;
+    if (!segmenter.Init(modelPath)) {
+        std::fprintf(stderr, "oct segmentation create failed\n");
         return 1;
     }
     cv::Mat mask;
 
     // The first call initializes image-size-dependent OpenCV buffers and warms TensorRT.
-    segmenter->predict(gray, mask);
-    const auto warmupTiming = segmenter->lastTiming();
+    segmenter.predict(gray, mask);
+    const auto warmupTiming = segmenter.lastTiming();
 
     double preprocessTotalMs = 0.0;
     double inferenceTotalMs = 0.0;
@@ -88,18 +88,18 @@ int main(int argc, char **argv) {
     double totalMs = 0.0;
 
     for (int i = 0; i < iterations; ++i) {
-        segmenter->predict(gray, mask);
+        segmenter.predict(gray, mask);
 
         // This is a shallow view of the segmenter's reusable output buffer. Consume it
         // before the next predict() call; clone only when persistent ownership is needed.
-        const auto timing = segmenter->lastTiming();
+        const auto timing = segmenter.lastTiming();
         preprocessTotalMs += timing.preprocessMs;
         inferenceTotalMs += timing.inferenceMs;
         postprocessTotalMs += timing.postprocessMs;
         totalMs += timing.totalMs;
     }
 
-    const int classes = segmenter->classes();
+    const int classes = segmenter.classes();
     int hist[4] = {};
     if (classes != 4 || !validateMask(mask, gray.size(), classes, hist)) {
         return 1;

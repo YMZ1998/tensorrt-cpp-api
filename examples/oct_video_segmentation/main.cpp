@@ -97,9 +97,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    auto segmenter = trtcpp::oct::OctSegmentation::Init(modelPath);
-    if (!segmenter) {
-        std::fprintf(stderr, "oct segmentation create: %s\n", segmenter.status().message().c_str());
+    trtcpp::oct::OctSegmentation segmenter;
+    if (!segmenter.Init(modelPath)) {
+        std::fprintf(stderr, "oct segmentation create failed\n");
         return 1;
     }
 
@@ -119,14 +119,14 @@ int main(int argc, char **argv) {
             break;
         }
         cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
-        //auto maskResult = segmenter->predict(gray);
+        // The bool overload keeps frame processing alive when a prediction fails.
         //if (!maskResult) {
         //    std::fprintf(stderr, "predict failed at frame %d: %s\n", processedFrames, maskResult.status().message().c_str());
         //    return 1;
         //}
-        segmenter->predict(gray, mask);
+        segmenter.predict(gray, mask);
 
-        const auto timing = segmenter->lastTiming();
+        const auto timing = segmenter.lastTiming();
         const double predictionMs = timing.totalMs;
         predictionTimes.push_back(predictionMs);
         preprocessTotalMs += timing.preprocessMs;

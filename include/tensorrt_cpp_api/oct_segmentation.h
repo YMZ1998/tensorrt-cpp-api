@@ -29,7 +29,8 @@ struct OctSegmentationOptions {
 
 class TRT_CPP_API_EXPORT OctSegmentation {
 public:
-    static Result<OctSegmentation> Init(const std::string &onnxPath);
+    OctSegmentation();
+    bool Init(const std::string &onnxPath);
     static Result<OctSegmentation> create(const std::string &onnxPath, OctSegmentationOptions options = {});
 
     OctSegmentation(OctSegmentation &&) noexcept;
