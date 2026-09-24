@@ -7,6 +7,7 @@
 
 #include "tensorrt_cpp_api/calibrator.h"
 
+#include <algorithm>
 #include <memory>
 
 #include <cuda_runtime.h>
@@ -26,6 +27,52 @@
 #include "tensorrt_cpp_api/cuda.h"
 
 namespace trtcpp {
+
+namespace {
+
+Result<std::size_t> resolveWorkspaceBytes(const BuildOptions &options) {
+    if (options.workspaceBytes.has_value()) {
+        return options.workspaceBytes.value();
+    }
+
+    int previousDevice = 0;
+    if (cudaError_t code = cudaGetDevice(&previousDevice); code != cudaSuccess) {
+        return cudaToStatus(code, "cudaGetDevice");
+    }
+    if (cudaError_t code = cudaSetDevice(options.deviceIndex); code != cudaSuccess) {
+        return cudaToStatus(code, "cudaSetDevice");
+    }
+
+    std::size_t freeBytes = 0;
+    std::size_t totalBytes = 0;
+    const cudaError_t memoryCode = cudaMemGetInfo(&freeBytes, &totalBytes);
+    const cudaError_t restoreCode = cudaSetDevice(previousDevice);
+    if (memoryCode != cudaSuccess) {
+        return cudaToStatus(memoryCode, "cudaMemGetInfo");
+    }
+    if (restoreCode != cudaSuccess) {
+        return cudaToStatus(restoreCode, "cudaSetDevice(restore)");
+    }
+
+    constexpr std::size_t kMiB = 1ULL << 20;
+    constexpr std::size_t kMinimumWorkspace = 256ULL * kMiB;
+    constexpr std::size_t kMinimumReserve = 512ULL * kMiB;
+
+    // Keep room for the CUDA context, TensorRT builder allocations, and existing workloads.
+    const std::size_t reserve = std::max(kMinimumReserve, totalBytes / 10);
+    if (freeBytes <= reserve) {
+        return Status{StatusCode::kCudaError, "not enough free GPU memory for automatic TensorRT workspace"};
+    }
+
+    const std::size_t available = freeBytes - reserve;
+    if (available < kMinimumWorkspace) {
+        return Status{StatusCode::kCudaError, "not enough free GPU memory for the minimum automatic TensorRT workspace"};
+    }
+    const std::size_t workspace = available * 3 / 4;
+    return std::max(kMinimumWorkspace, std::min(workspace, available));
+}
+
+} // namespace
 
 std::string_view toString(Precision p) noexcept {
     switch (p) {
@@ -327,9 +374,11 @@ Result<std::vector<std::byte>> EngineBuilder::buildFromOnnxBytes(std::span<const
         return Status{StatusCode::kTensorRtError, "createBuilderConfig failed"};
     }
 
-    if (options.workspaceBytes.has_value()) {
-        config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, options.workspaceBytes.value());
+    auto workspaceBytes = resolveWorkspaceBytes(options);
+    if (!workspaceBytes) {
+        return workspaceBytes.status();
     }
+    config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, workspaceBytes.value());
 
 #if NV_TENSORRT_MAJOR < 11
     // Weak-typing path (precision flags). On TRT 11 these flags are removed; strong typing

@@ -34,12 +34,14 @@ struct BuildOptions {
     /// context you intend to run.
     std::vector<OptimizationProfile> profiles;
     int deviceIndex = 0;
-    int dlaCore = -1;                                       ///< -1 = GPU; >= 0 selects a DLA core
-    std::optional<std::size_t> workspaceBytes = 8ULL << 30; ///< setMemoryPoolLimit(kWORKSPACE); unset => TRT default
+    int dlaCore = -1; ///< -1 = GPU; >= 0 selects a DLA core
+    /// setMemoryPoolLimit(kWORKSPACE); unset => automatically use the current device's
+    /// available memory with a safety reserve.
+    std::optional<std::size_t> workspaceBytes = std::nullopt;
     /// nullopt => auto: true for kInt8Qdq and on TRT >= 11; false for kFp16/kFp32 on
     /// TRT < 11 (so the weak-typed precision flag is honored).
     std::optional<bool> stronglyTyped;
-    bool versionCompatible = false;  ///< kVERSION_COMPATIBLE (relaxes cache staleness)
+    bool versionCompatible = false; ///< kVERSION_COMPATIBLE (relaxes cache staleness)
     bool hardwareCompatible = false; ///< Ampere-plus hardware compatibility (relaxes cache staleness)
     std::string engineCacheDir = ".";
     std::string timingCachePath; ///< empty => engineCacheDir/<hash>.timing
