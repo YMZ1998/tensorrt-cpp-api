@@ -1,7 +1,9 @@
 file(
     GLOB TRTCPP_SOURCES
     CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/detail/*.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/detail/*.cpp"
 )
 

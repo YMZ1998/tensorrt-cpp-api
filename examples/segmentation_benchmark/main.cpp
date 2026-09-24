@@ -4,6 +4,7 @@
 //   segmentation_benchmark [iterations] [warmup] [model.onnx|engine] [image]
 
 #include "../common/image_io.h"
+#include "tensorrt_cpp_api/common.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -21,13 +22,6 @@
 using namespace trtcpp;
 
 namespace {
-
-std::filesystem::path getExeDir() {
-    wchar_t buffer[MAX_PATH];
-    GetModuleFileNameW(nullptr, buffer, MAX_PATH);
-
-    return std::filesystem::path(buffer).parent_path();
-}
 
 float maskedGrayAt(const examples::Image &img, int x, int y) {
     x = std::clamp(x, 0, img.width - 1);
@@ -104,15 +98,14 @@ int parsePositive(const char *text, int fallback) {
 
 int main(int argc, char **argv) {
     auto exeDir = getExeDir();
-    const std::string root = "D:/Code/tensorrt-cpp-api";
-    const int iterations = argc > 1 ? parsePositive(argv[1], 30) : 30;
+    const int iterations = argc > 1 ? parsePositive(argv[1], 30) : 100;
     const int warmup = argc > 2 ? std::max(0, std::atoi(argv[2])) : 5;
     const std::string modelPath = argc > 3 ? argv[3] : exeDir.string() + "/models/efficientnet_b1_best_model.onnx";
     const std::string imagePath = argc > 4 ? argv[4] : exeDir.string() + "/input.png";
 
     BuildOptions bo;
     bo.precision = Precision::kFp16;
-    bo.engineCacheDir = root + "/models";
+    bo.engineCacheDir = exeDir.string() + "/models";
     auto engine = EngineBuilder{}.buildAndLoad(modelPath, bo);
     if (!engine) {
         std::fprintf(stderr, "engine: %s\n", engine.status().message().c_str());
@@ -161,6 +154,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    std::printf("cpu:        %s\n", getCpuName().c_str());
+    std::printf("gpu:        %s\n", getGpuName().c_str());
     std::printf("model:      %s\n", modelPath.c_str());
     std::printf("image:      %s\n", imagePath.c_str());
     std::printf("input:      [1,1,%d,%d]\n", inH, inW);
